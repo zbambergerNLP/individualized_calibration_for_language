@@ -1,134 +1,115 @@
-import torch
-from torch import nn, optim
+import math
+import typing
 
-import os
-from pathlib import Path
+import torch
+import transformers
 from datetime import datetime
 
 
-# Used to train and evaluate the model.
-class Trainer():
-    def __init__(self, model, train_data_loader, test_data_loader, device, args):
-        self.model = model
-        self.train_data_loader = train_data_loader
-        self.test_data_loader = test_data_loader
-        self.device = device
-        self.args = args
+class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
+    """
+    Trainer for Randomized Individual Calibration.
+    """
 
-        self.optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    def __init__(
+            self,
+            model: torch.nn.Module,
+            args: transformers.TrainingArguments,
+            coefficient: float = 1.0,
+            data_collator: transformers.DataCollator = None,
+            train_dataset: torch.utils.data.Dataset = None,
+            eval_dataset: torch.utils.data.Dataset = None,
+            tokenizer: torch.utils.data.Dataset = None,
+            model_init=None,
+            compute_metrics=None,
+            callbacks=None,
+            preprocess_logits_for_metrics=None,
+    ):
+        """Initialize a Trainer class for Randomized Individual Calibration.
 
-        # Lists to store metrics
-        self.loss_list, self.loss_cdf_list, self.loss_stddev_list, self.loss_nll_list\
-            = [], [], [], []
-        self.loss_list_test, self.loss_cdf_list_test, self.loss_stddev_list_test,\
-            self.loss_nll_list_test = [], [], [], []
+        Args:
+            model: The model to train.
+            args: The training arguments.
+            coefficient: The coefficient to use to balance between the cdf loss and nll loss.
+            data_collator: The data collator to use.
+            train_dataset: The training dataset.
+            eval_dataset: The evaluation dataset.
+            tokenizer: The tokenizer to use.
+            model_init: The model initialization function.
+            compute_metrics: The metrics computation function.
+            callbacks: The callbacks to use.
+            preprocess_logits_for_metrics: The logits preprocessing function.
 
-        # Early stopping
-        self.best_model = None
-        self.best_loss = 1e10
+        Returns:
+            A Trainer instance.
+        """
+
+        super().__init__(
+            model=model,
+            args=args,
+            data_collator=data_collator,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            tokenizer=tokenizer,
+            model_init=model_init,
+            compute_metrics=compute_metrics,
+            callbacks=callbacks,
+            preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        )
+
+        self.coefficient = coefficient
 
         # Current time
         now = datetime.now()
         self.date_time = now.strftime("%Y_%m_%d")
         self.hour_time = now.strftime("%H_%M")
 
-    def train_loop(self):
-        for epoch in range(self.args.epochs):
-            loss_list_tpm, loss_cdf_list_tpm, loss_stddev_list_tpm, loss_nll_list_tpm \
-                = [], [], [], []
-            self.model = self.model.train()
+    def compute_loss(
+            self,
+            model: torch.nn.Module,
+            inputs: typing.Dict[str, typing.Any],
+            return_outputs: bool = False,
+    ) -> typing.Union[typing.Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
+        """Compute the loss for the given inputs.
 
-            for i, d in enumerate(self.train_data_loader):
-                input_ids = d["input_ids"].to(self.device)
-                attention_mask = d["attention_mask"].to(self.device)
-                targets = d["targets"].to(self.device)
+        Args:
+            model: The model to use.
+            inputs: The inputs to use.
+            return_outputs: Whether to return the outputs.
 
-                cdf, loss_cdf, loss_stddev, loss_nll = self.model.eval_all(input_ids=input_ids,
-                                                                           attention_mask=attention_mask,
-                                                                           target=targets)
-                # Current train iteration metrics
-                loss_cdf_list_tpm.append(loss_cdf.item())
-                loss_stddev_list_tpm.append(loss_stddev.item())
-                loss_nll_list_tpm.append(loss_nll.item())
+        Returns:
+            The loss and the outputs if return_outputs is True. Otherwise, only the loss.
+        """
+        input_ids = inputs.get("input_ids")
+        attention_mask = inputs.get("attention_mask")
+        target = inputs.get("labels")
 
-                loss = (1 - self.args.coeff) * loss_cdf + self.args.coeff * loss_nll
-                loss_list_tpm.append(loss.item())
+        if 'input_r' in inputs:
+            input_r = inputs.get("input_r")
+        else:
+            input_r = torch.rand(input_ids.shape[0], 1, device=input_ids.device)
 
-                loss.backward()
-                self.optimizer.step()
-                self.optimizer.zero_grad()
+        outputs = self.model.forward(input_ids, attention_mask, input_r)
+        mean, stddev = outputs
+        cdf = 0.5 * (1.0 + torch.erf((target - mean) / stddev / math.sqrt(2)))
 
-                if i % int(len(self.train_data_loader) / self.args.iteration_eval) == 0:
-                    # Save train metrics so far
-                    self.loss_cdf_list.append(sum(loss_cdf_list_tpm) / len(loss_cdf_list_tpm))
-                    self.loss_stddev_list.append(sum(loss_stddev_list_tpm) / len(loss_stddev_list_tpm))
-                    self.loss_nll_list.append(sum(loss_nll_list_tpm) / len(loss_nll_list_tpm))
-                    self.loss_list.append(sum(loss_list_tpm) / len(loss_list_tpm))
+        loss_cdf = torch.abs(cdf - input_r).mean()
 
-                    loss_list_tpm, loss_cdf_list_tpm, loss_stddev_list_tpm, loss_nll_list_tpm \
-                        = [], [], [], []
-                    print("enter eval")
-                    self.eval_iter()
-                    print("{}\{} | iter {} | Train Loss: {:.3f} | Test Loss: {:.3f}".
-                          format(epoch, self.args.epochs, i, self.loss_list[-1], self.loss_list_test[-1]))
-                    self.model = self.model.train()
+        # TODO: Move loss stddev to the compute metrics function.
+        loss_stddev = stddev.mean()
 
-                    if self.args.early_stopping:
-                        # Saves the best model so far, according to the test loss
-                        self.perform_early_stopping()
-                    else:
-                        self.best_model = self.model
+        # Log likelihood of by under the predicted Gaussian distribution
+        # TODO: Describe the nll loss function.
+        loss_nll = torch.log(stddev) + math.log(2 * math.pi) / 2.0 + (((target - mean) / stddev) ** 2 / 2.0)
+        loss_nll = loss_nll.mean()
 
-        print("Done Training")
-        self.saves_experiment()
+        loss = (1 - self.coefficient) * loss_cdf + self.coefficient * loss_nll
 
+        self.log({
+            'loss': loss,
+            'loss_cdf': loss_cdf,
+            'loss_nll': loss_nll,
+            'loss_stddev': loss_stddev,
+        })
 
-    def eval_iter(self):
-        self.model = self.model.eval()
-        with torch.no_grad():
-            for d in self.test_data_loader:
-                input_ids = d["input_ids"].to(self.device)
-                attention_mask = d["attention_mask"].to(self.device)
-                targets = d["targets"].to(self.device)
-
-                cdf, loss_cdf, loss_stddev, loss_nll = self.model.eval_all(input_ids=input_ids,
-                                                                           attention_mask=attention_mask,
-                                                                           target=targets)
-
-                self.loss_cdf_list_test.append(loss_cdf.item())
-                self.loss_stddev_list_test.append(loss_stddev.item())
-                self.loss_nll_list_test.append(loss_nll.item())
-
-                loss = (1 - self.args.coeff) * loss_cdf + self.args.coeff * loss_nll
-                self.loss_list_test.append(loss.item())
-
-
-    # Saves the best model so far, according to the test loss
-    def perform_early_stopping(self):
-        if self.loss_list_test[-1] < self.best_loss:
-            self.best_loss = self.loss_list_test[-1]
-            self.best_model = self.model
-            print("New best model saved")
-
-    def saves_experiment(self):
-        save_path = os.path.join(os.path.dirname(__file__), '..', 'experiments', "{}-{}".format(self.date_time,self.hour_time))
-        Path(save_path).mkdir(parents=True, exist_ok=True)
-
-        # Saving descriptor of the experiment
-        path_to_save_text = os.path.join(save_path, "descriptor.txt")
-        file = open(path_to_save_text, "w")  # saving the dataset description
-        file.write(self.__str__())
-
-        # Saving the best model
-        path_to_save_model = os.path.join(save_path, "merged_model.pt")
-        torch.save(self.best_model.state_dict(), path_to_save_model)
-
-
-    def __str__(self):
-        text = "{}-{} \n".format(self.date_time, self.hour_time)
-        for i, elem in enumerate(vars(self.args).items()):
-            field_name, value = elem
-            text += f'{field_name}: {value} '
-            if (i + 1) % 4 == 0:
-                text += "\n"
-        return text
+        return (loss, outputs) if return_outputs else loss

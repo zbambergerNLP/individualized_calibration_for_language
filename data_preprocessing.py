@@ -4,16 +4,39 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 import os
 
-GROUP_LIST = ['black', 'white', 'christian', 'female', 'male', 'homosexual_gay_or_lesbian', 'jewish', 'muslim',
-              'psychiatric_or_mental_illness']
+# To run this script using Newton, run the following command:
+# srun --partition=nlp --account=nlp --gres=gpu:1 -c 10 python data_preprocessing.py
+# The above command will request 1 GPU and 10 CPU cores. You can change these values as needed.
+# Note that you will need to adjust the partition and account to match your Newton account.
 
-BASE_COLUMNS = ['id', 'target', 'comment_text']
+# TODO: Create a perser for this script.
+# TODO: Create helper functions for the data processing steps so that they can be called from main.py.
+#  We can tell whether we need to do this by checking whether the files created by this function already exist.
+#  If they do, we can skip this step.
+
+GROUP_LIST = [
+    'black',
+    'white',
+    'christian',
+    'female',
+    'male',
+    'homosexual_gay_or_lesbian',
+    'jewish',
+    'muslim',
+    'psychiatric_or_mental_illness',
+]
+
+BASE_COLUMNS = [
+    'id',
+    'target',
+    'comment_text',
+]
 
 seed = 42
 
 if __name__ == "__main__":
     # 1. Download the data and delete the unwanted columns.
-    data = pd.read_csv('../data/train.csv')
+    data = pd.read_csv('data/train.csv')
     data = data[GROUP_LIST + BASE_COLUMNS]
     print(f'Data dimensions: {data.shape}')
 
@@ -104,9 +127,9 @@ if __name__ == "__main__":
     test_data = shuffle(test_data, random_state=seed)
 
     # Save the datasets
-    train_data.to_csv('../data/train_data.csv', index=False)
-    eval_data.to_csv('../data/eval_data.csv', index=False)
-    test_data.to_csv('../data/test_data.csv', index=False)
+    train_data.to_csv('data/train_data.csv', index=False)
+    eval_data.to_csv('data/eval_data.csv', index=False)
+    test_data.to_csv('data/test_data.csv', index=False)
 
     print(f'Train data dimensions: {train_data.shape}')
     print(f'Eval data dimensions: {eval_data.shape}')

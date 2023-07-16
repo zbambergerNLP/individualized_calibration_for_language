@@ -47,9 +47,19 @@ class TrainingArguments:
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(
+        # TODO: Consider switching default to `textattack/bert-base-uncased-yelp-polarity`
         default='bert-base-uncased',
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models."},
     )
+    mlp_hidden: Optional[int] = field(
+        default=100,
+        metadata={"help": "The hidden size of the MLP layer."},
+    )
+    mlp_dropout: Optional[float] = field(
+        default=0.5,
+        metadata={"help": "The dropout probability of the MLP layer."},
+    )
+
     use_fast_tokenizer: bool = field(
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."}
@@ -64,16 +74,32 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
+    # For HuggingFace datasets
     dataset_name_or_path: Optional[str] = field(
         default='civil_comments',
         metadata={"help": "Path to dataset or dataset identifier from huggingface.co/datasets."},
     )
     dataset_features_column: str = field(
-        default="text", metadata={"help": "The name of the column containing the input text."}
+        default="comment_text", metadata={"help": "The name of the column containing the input text."}
     )
     dataset_labels_column: str = field(
-        default="toxicity", metadata={"help": "The name of the column containing the labels."}
+        default="target", metadata={"help": "The name of the column containing the labels."}
     )
+
+    # For custom datasets
+    train_file: Optional[str] = field(
+        default='data/train_data.csv',
+        metadata={"help": "Path to training data file"},
+    )
+    validation_file: Optional[str] = field(
+        default='data/eval_data.csv',
+        metadata={"help": "Path to validation data file"},
+    )
+    test_file: Optional[str] = field(
+        default='data/test_data.csv',
+        metadata={"help": "Path to testing data file"},
+    )
+
     data_seed: int = field(
         default=42, metadata={"help": "random seed for initialization of the data."}
     )

@@ -7,9 +7,15 @@ import typing
 import datasets
 import torch
 import transformers
+
+import data
+from trainer import RandomizedIndividualCalibrationTrainer
 from torch import nn
 from transformers import TrainingArguments, Trainer, BertForSequenceClassification, AutoTokenizer
 from datasets import load_dataset
+
+import model
+
 
 # To run this script using Newton, run the following command:
 # srun --partition=nlp --account=nlp --gres=gpu:1 -c 10 python main.py
@@ -20,21 +26,21 @@ from datasets import load_dataset
 # TODO: Create a custom Trainer class that overrides the compute_loss method. This is where we will implement the
 #  individualized calibration loss. Once this is done, we can use this Trainer class (instead of the default Trainer) to
 #  train the model.
-class RandomizedIndividualizedForecasterTrainer(Trainer):
-    def compute_loss(
-            self,
-            model: nn.Module, 
-            inputs: typing.Union[typing.Dict[str, torch.Tensor], typing.Tuple[torch.Tensor]],
-            return_outputs: bool = False,
-    ) -> typing.Union[float, typing.Tuple[float, torch.Tensor]]:
-        labels = inputs.get("labels")
-        # forward pass
-        outputs = model(**inputs)
-        logits = outputs.get("logits")
-        # compute custom loss (suppose one has 3 labels with different weights)
-        loss_fct = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 2.0, 3.0], device=model.device))
-        loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
-        return (loss, outputs) if return_outputs else loss
+# class RandomizedIndividualizedForecasterTrainer(Trainer):
+#     def compute_loss(
+#             self,
+#             model: nn.Module,
+#             inputs: typing.Union[typing.Dict[str, torch.Tensor], typing.Tuple[torch.Tensor]],
+#             return_outputs: bool = False,
+#     ) -> typing.Union[float, typing.Tuple[float, torch.Tensor]]:
+#         labels = inputs.get("labels")
+#         # forward pass
+#         outputs = model(**inputs)
+#         logits = outputs.get("logits")
+#         # compute custom loss (suppose one has 3 labels with different weights)
+#         loss_fct = nn.CrossEntropyLoss()
+#         loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+#         return (loss, outputs) if return_outputs else loss
 
 
 def main():
@@ -43,13 +49,15 @@ def main():
         (flags.ModelArguments, flags.DataArguments, flags.TrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    args = parser.parse_args()
+    print(f'model args are:\n{model_args}')
+    print(f'data args are:\n{data_args}')
+    print(f'training args are:\n{training_args}')
+    # args = parser.parse_args()
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
 
-    # Load dataset
     # TODO: Load the dataset from tensorflow_datasets as opposed to the huggingface dataset.
-    dataset = load_dataset("civil_comments")
+    # dataset = load_dataset("civil_comments")
 
     def tokenizer_function(
             example: typing.Dict[str, typing.Any],
@@ -70,46 +78,74 @@ def main():
         result['labels'] = example[data_args.dataset_labels_column]
         return result
 
-    tokenizer_dataset_path = f"{model_args.model_name_or_path}_{data_args.dataset_name_or_path}_tokenized_dataset"
-    try:
-        tokenized_dataset = datasets.load_from_disk(tokenizer_dataset_path)
-    except FileNotFoundError:
-        tokenized_dataset = dataset.map(
-            tokenizer_function,
-            batched=True,
+    # # Split the dataset into training, validation, and test sets.
+    # # Ensure that their contents are conducive to the selected language model.
+    # training_set = tokenized_dataset['train']
+    # tokenized_dataset.set_format(
+    #     type='torch',
+    #     columns=['input_ids', 'token_type_ids', 'attention_mask', 'labels'],
+    # )
+    # validation_set = tokenized_dataset['validation']
+    # tokenized_dataset.set_format(
+    #     type='torch',
+    #     columns=['input_ids', 'token_type_ids', 'attention_mask', 'labels'],
+    # )
+    # test_set = tokenized_dataset['test']
+    # tokenized_dataset.set_format(
+    #     type='torch',
+    #     columns=['input_ids', 'token_type_ids', 'attention_mask', 'labels'],
+    # )
+
+    tokenized_train_dataset_name = 'tokenized_train_data.csv'
+    tokenized_validation_dataset_name = 'tokenized_eval_data.csv'
+    tokenized_test_dataset_name = 'tokenized_test_data.csv'
+
+    # Check if the tokenized datasets already exist. If so, load them. Otherwise, create them.
+    datasets_exist = (
+        os.path.exists(os.path.join('data', tokenized_train_dataset_name)) and
+        os.path.exists(os.path.join('data', tokenized_validation_dataset_name)) and
+        os.path.exists(os.path.join('data', tokenized_test_dataset_name))
+    )
+
+    if datasets_exist:
+        train_dataset = datasets.load_from_disk(os.path.join('data', tokenized_train_dataset_name))
+        validation_dataset = datasets.load_from_disk(os.path.join('data', tokenized_validation_dataset_name))
+        test_dataset = datasets.load_from_disk(os.path.join('data', tokenized_test_dataset_name))
+
+    # Load datasets
+    else:
+        train_dataset, validation_dataset, test_dataset = data.create_dataloaders(
+            train_file=data_args.train_file,
+            validation_file=data_args.validation_file,
+            test_file=data_args.test_file,
+            tokenizer_function=tokenizer_function,
             batch_size=model_args.tokenizer_batch_size,
-            num_proc=os.cpu_count(),  # Use all CPU cores.
         )
-
-        tokenized_dataset.save_to_disk(tokenizer_dataset_path)
-
-    # Split the dataset into training, validation, and test sets.
-    # Ensure that their contents are conducive to the selected language model.
-    training_set = tokenized_dataset['train']
-    tokenized_dataset.set_format(
-        type='torch',
-        columns=['input_ids', 'token_type_ids', 'attention_mask', 'labels'],
-    )
-    validation_set = tokenized_dataset['validation']
-    tokenized_dataset.set_format(
-        type='torch',
-        columns=['input_ids', 'token_type_ids', 'attention_mask', 'labels'],
-    )
-    test_set = tokenized_dataset['test']
-    tokenized_dataset.set_format(
-        type='torch',
-        columns=['input_ids', 'token_type_ids', 'attention_mask', 'labels'],
-    )
+        train_dataset.save_to_disk(
+            os.path.join('data', tokenized_train_dataset_name),
+        )
+        validation_dataset.save_to_disk(
+            os.path.join('data', tokenized_validation_dataset_name),
+        )
+        test_dataset.save_to_disk(
+            os.path.join('data', tokenized_test_dataset_name),
+        )
 
     # Load pretrained model
     # We load the model from the checkpoint specified by the model_name_or_path argument such that the model is
     # initialized with the same weights as the pretrained model.
     # We set the number of labels to 1, since that is conducive to regression (the case for predicting toxicity in the
     # range [0, 1]).
-    model = BertForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path,
-        num_labels=1,
+    randomized_individual_calibration_model = model.CommentRegressor(
+        mlp_hidden=model_args.mlp_hidden,
+        drop_prob=model_args.mlp_dropout,
+        text_encoder_model_name=model_args.model_name_or_path,
     )
+
+    # model = BertForSequenceClassification.from_pretrained(
+    #     model_args.model_name_or_path,
+    #     num_labels=1,
+    # )
 
     # TODO: Initialize logging to wandb. The trainer should report to wandb.
 
@@ -140,32 +176,37 @@ def main():
         dataloader_num_workers=training_args.dataloader_num_workers if torch.cuda.is_available() else 0,
     )
 
+    # TODO: Make the compute_metrics function compute accuracy and MSE on the basis of the CDF which the model produces.
     # TODO: Add fairness metrics to the compute_metrics function (e.g., TPR, FPR, BPSN, BNSP, AUC, etc...)
-    def compute_metrics(
-            eval_pred: transformers.EvalPrediction,
-    ) -> dict[str, float]:
-        """Compute metrics for the evaluation predictions.
+    # def compute_metrics(
+    #         eval_pred: transformers.EvalPrediction,
+    # ) -> dict[str, float]:
+    #     """Compute metrics for the evaluation predictions.
+    #
+    #     :param eval_pred: The output of the model on the evaluation set.
+    #     :return: A dictionary containing the metrics.
+    #     """
+    #     labels = eval_pred.label_ids
+    #     preds = eval_pred.predictions.argmax(-1)
+    #     acc = (preds == labels).mean()
+    #     mean_squared_error = ((preds - labels) ** 2).mean()
+    #     metrics = {
+    #         "accuracy": acc,
+    #         "mse": mean_squared_error,
+    #     }
+    #     return metrics
 
-        :param eval_pred: The output of the model on the evaluation set.
-        :return: A dictionary containing the metrics.
-        """
-        labels = eval_pred.label_ids
-        preds = eval_pred.predictions.argmax(-1)
-        acc = (preds == labels).mean()
-        mean_squared_error = ((preds - labels) ** 2).mean()
-        metrics = {
-            "accuracy": acc,
-            "mse": mean_squared_error,
-        }
-        return metrics
-
+    # TODO: Need to separate into train/validation/test sets in the future.
     # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
+
+    trainer = RandomizedIndividualCalibrationTrainer(
+        model=randomized_individual_calibration_model,
         args=training_args,
-        compute_metrics=compute_metrics,
-        train_dataset=training_set.remove_columns(["text", "toxicity"]),    # Remove the text and toxicity columns.
-        eval_dataset=validation_set.remove_columns(["text", "toxicity"]),   # Remove the text and toxicity columns.
+        # compute_metrics=compute_metrics,
+        train_dataset=train_dataset['train'],
+        eval_dataset=validation_dataset['train'],
+        # train_dataset=training_set.remove_columns(["text", "toxicity"]),    # Remove the text and toxicity columns.
+        # eval_dataset=validation_set.remove_columns(["text", "toxicity"]),   # Remove the text and toxicity columns.
         callbacks=[
             transformers.EarlyStoppingCallback(early_stopping_patience=3),
         ],
@@ -175,7 +216,7 @@ def main():
     trainer.train()
 
     # Evaluation
-    eval_result = trainer.evaluate(eval_dataset=test_set)
+    eval_result = trainer.evaluate(eval_dataset=test_dataset['train'])
     print(f"Eval result: {eval_result}")
 
 
