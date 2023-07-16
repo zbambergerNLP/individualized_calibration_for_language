@@ -7,15 +7,27 @@ import os
 
 @dataclass
 class TrainingArguments:
+    run_name: Optional[str] = field(
+        default="randomized_individual_calibration",
+        metadata={"help": "The name of the run. Used for logging and saving checkpoints."},
+    )
+    local_checkpoint_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "The path to a local checkpoint. Used to resume training."},
+    )
     output_dir: Optional[str] = field(
         default="./outputs",
         metadata={"help": "The output directory where the model predictions and checkpoints will be written."},
+    )
+    last_run_id: Optional[str] = field(
+        default=None,
+        metadata={"help": "The ID of the last run. Used to resume training."},
     )
     per_device_train_batch_size: int = field(
         default=16, metadata={"help": "Batch size per device during training."}
     )
     per_device_eval_batch_size: int = field(
-        default=64, metadata={"help": "Batch size per device for evaluation."}
+        default=128, metadata={"help": "Batch size per device for evaluation."}
     )
     optimizer: Optional[str] = field(
         default="adamw_hf", metadata={"help": "The optimizer to use. Can be 'adamw' or 'adafactor'."}
@@ -29,15 +41,16 @@ class TrainingArguments:
     num_train_epochs: int = field(
         default=3, metadata={"help": "Total number of training epochs to perform."}
     )
-    learning_rate: float = field(default=5e-5, metadata={"help": "The initial learning rate for AdamW."})
+    learning_rate: float = field(default=5e-3, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
     warmup_ratio: int = field(default=0.1, metadata={"help": "The ratio of warmup steps to total training steps."})
-    logging_steps: int = field(default=10, metadata={"help": "Log every X updates steps."})
-    save_steps: int = field(default=1_000, metadata={"help": "Save checkpoint every X updates steps."})
-    eval_steps: int = field(default=100, metadata={"help": "Run evaluation every X updates steps."})
+    logging_steps: int = field(default=100, metadata={"help": "Log every X updates steps."})
+    save_steps: int = field(default=10_000, metadata={"help": "Save checkpoint every X updates steps."})
+    eval_steps: int = field(default=5_000, metadata={"help": "Run evaluation every X updates steps."})
     dataloader_num_workers: int = field(
         default=4, metadata={"help": "Number of subprocesses to use for data loading."}
     )
+    deepspeed: str = field(default="zero_stage2.json", metadata={"help": "The path to the deepspeed config file."})
 
     def __post_init__(self):
         if self.output_dir is not None:
