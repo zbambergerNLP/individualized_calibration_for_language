@@ -36,7 +36,7 @@ seed = 42
 
 if __name__ == "__main__":
     # 1. Download the data and delete the unwanted columns.
-    data = pd.read_csv('data/train.csv')
+    data = pd.read_csv('../data/train.csv')
     data = data[GROUP_LIST + BASE_COLUMNS]
     print(f'Data dimensions: {data.shape}')
 
@@ -55,6 +55,7 @@ if __name__ == "__main__":
     plt.title('Histogram of target')
     plt.xlabel('Target')
     plt.ylabel('Frequency')
+    plt.savefig('../visualizations/EDA/target_histogram.png')
     plt.savefig('../visualizations/EDA/target_histogram.png')
     plt.close()
 
@@ -110,28 +111,32 @@ if __name__ == "__main__":
     data_without_nulls = data[~mask]
 
     print(f'Data with nulls dimensions: {data_with_nulls.shape}')
-    print(f'Data without nulls dimensions: {data_without_nulls.shape}')
+    print(f'Data without nulls dimensions: {data_without_nulls.shape} \n')
 
-    train_data_wit_nulls, temp_data_with_nulls = train_test_split(data_with_nulls, test_size=0.4, random_state=seed)
-    eval_data_with_nulls, test_data_with_nulls = train_test_split(temp_data_with_nulls, test_size=0.5, random_state=seed)
+    train_data_with_nulls, temp_data_with_nulls = train_test_split(data_with_nulls, test_size=0.35, random_state=seed)
+    #eval_data_with_nulls, test_data_with_nulls = train_test_split(temp_data_with_nulls, test_size=0.5, random_state=seed)
 
-    train_data_without_nulls, temp_data_without_nulls = train_test_split(data_without_nulls, test_size=0.05, random_state=seed)
+    train_data_without_nulls, temp_data_without_nulls = train_test_split(data_without_nulls, test_size=0.75, random_state=seed)
+    calib_data_without_nulls, temp_data_without_nulls = train_test_split(temp_data_without_nulls, test_size=0.67, random_state=seed)
     eval_data_without_nulls, test_data_without_nulls = train_test_split(temp_data_without_nulls, test_size=0.5, random_state=seed)
 
-    train_data = pd.concat([train_data_wit_nulls, train_data_without_nulls])
-    eval_data = pd.concat([eval_data_with_nulls, eval_data_without_nulls])
-    test_data = pd.concat([test_data_with_nulls, test_data_without_nulls])
+    train_data = pd.concat([train_data_with_nulls, train_data_without_nulls])
+    calib_data = calib_data_without_nulls
+    eval_data = eval_data_without_nulls
+    test_data = test_data_without_nulls
+    #eval_data = pd.concat([eval_data_with_nulls, eval_data_without_nulls])
+    #test_data = pd.concat([test_data_with_nulls, test_data_without_nulls])
 
     train_data = shuffle(train_data, random_state=seed)
-    eval_data = shuffle(eval_data, random_state=seed)
-    test_data = shuffle(test_data, random_state=seed)
 
     # Save the datasets
-    train_data.to_csv('data/train_data.csv', index=False)
-    eval_data.to_csv('data/eval_data.csv', index=False)
-    test_data.to_csv('data/test_data.csv', index=False)
+    train_data.to_csv('../data/train_data.csv', index=False)
+    calib_data.to_csv('../data/calib_data.csv', index=False)
+    eval_data.to_csv('../data/eval_data.csv', index=False)
+    test_data.to_csv('../data/test_data.csv', index=False)
 
     print(f'Train data dimensions: {train_data.shape}')
+    print(f'Calib data dimensions: {calib_data.shape}')
     print(f'Eval data dimensions: {eval_data.shape}')
     print(f'Test data dimensions: {test_data.shape}')
 

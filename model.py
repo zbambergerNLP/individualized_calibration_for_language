@@ -1,6 +1,9 @@
 import typing
 
 import numpy as np
+from sklearn.isotonic import IsotonicRegression
+import math
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -11,7 +14,6 @@ class CommentRegressorPrediction(typing.NamedTuple):
     """
     Prediction output for a CommentRegressor.
     """
-
     means: np.ndarray
     stddevs: np.ndarray
     label_ids: np.ndarray
@@ -71,3 +73,35 @@ class CommentRegressor(nn.Module):
         stddev = torch.sigmoid(h[:, 1]) * 5.0 + 0.01
 
         return mean, stddev
+
+
+    def recalibrate(
+            self,
+            input_ids: torch.Tensor,  # Tensor of input token ids of shape [batch_size, max_seq_len, vocab_size],
+            attention_mask: torch.Tensor = None,  # Tensor of attention masks of shape [batch_size, max_seq_len]
+            input_r: torch.Tensor = None,  # Tensor of random values of shape [batch_size, 1]
+            label_ids: torch.Tensor = None,  # Tensor of label ids of shape [batch_size]
+    ):
+        with torch.no_grad():
+            outputs = self.model.forward(input_ids, attention_mask, input_r)
+            mean, stddev = outputs
+            cdf = (0.5 * (1.0 + torch.erf((label_ids - mean) / stddev / math.sqrt(2)))).cpu().numpy()[:, 0].astype(np.float)
+
+        cdf = np.sort(cdf)
+        lin = np.linspace(0, 1, int(cdf.shape[0]))
+
+        # Insert an extra 0 and 1 to ensure the range is always [0, 1], and trim CDF for numerical stability
+        cdf = np.clip(cdf, a_max=1.0 - 1e-6, a_min=1e-6)
+        cdf = np.insert(np.insert(cdf, -1, 1), 0, 0)
+        lin = np.insert(np.insert(lin, -1, 1), 0, 0)
+
+        iso_transform = IsotonicRegression()
+        iso_transform.fit_transform(cdf, lin)
+        self.iso_transform = iso_transform
+
+    def apply_recalibrate(self, cdf):
+        if self.iso_transform is not None:
+            original_shape = cdf.shape
+            return np.reshape(self.iso_transform.transform(cdf.flatten()), original_shape)
+        else:
+            return cdf
