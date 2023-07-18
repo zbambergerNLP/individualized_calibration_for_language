@@ -38,7 +38,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
             tokenizer: transformers.PreTrainedTokenizerBase = None,
             model_init: typing.Callable[[], torch.nn.Module] = None,
             compute_metrics: typing.Callable[
-                [individualized_calibration_model.CommentRegressorPrediction], typing.Dict] = None,
+                [individualized_calibration_model.CommentRegressorPrediction, bool], typing.Dict] = None,
             callbacks: typing.List[transformers.TrainerCallback] = None,
             optimizers: typing.Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
             preprocess_logits_for_metrics: typing.Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
@@ -107,11 +107,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         input_ids = inputs.get("input_ids")
         attention_mask = inputs.get("attention_mask")
         target = inputs.get("labels")
-
-        if 'input_r' in inputs:
-            input_r = inputs.get("input_r")
-        else:
-            input_r = torch.rand(input_ids.shape[0], 1, device=input_ids.device)
+        input_r = inputs.get("input_r")
 
         outputs = self.model.forward(input_ids, attention_mask, input_r)
         mean, stddev = outputs

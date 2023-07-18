@@ -36,7 +36,7 @@ seed = 42
 
 if __name__ == "__main__":
     # 1. Download the data and delete the unwanted columns.
-    data = pd.read_csv('../data/train.csv')
+    data = pd.read_csv('data/train.csv')
     data = data[GROUP_LIST + BASE_COLUMNS]
     print(f'Data dimensions: {data.shape}')
 
@@ -130,10 +130,10 @@ if __name__ == "__main__":
     train_data = shuffle(train_data, random_state=seed)
 
     # Save the datasets
-    train_data.to_csv('../data/train_data.csv', index=False)
-    calib_data.to_csv('../data/calib_data.csv', index=False)
-    eval_data.to_csv('../data/eval_data.csv', index=False)
-    test_data.to_csv('../data/test_data.csv', index=False)
+    train_data.to_csv('data/train_data.csv', index=False)
+    calib_data.to_csv('data/calib_data.csv', index=False)
+    eval_data.to_csv('data/eval_data.csv', index=False)
+    test_data.to_csv('data/test_data.csv', index=False)
 
     print(f'Train data dimensions: {train_data.shape}')
     print(f'Calib data dimensions: {calib_data.shape}')

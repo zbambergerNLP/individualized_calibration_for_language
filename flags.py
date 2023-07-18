@@ -46,7 +46,7 @@ class TrainingArguments:
     warmup_ratio: int = field(default=0.1, metadata={"help": "The ratio of warmup steps to total training steps."})
     logging_steps: int = field(default=100, metadata={"help": "Log every X updates steps."})
     save_steps: int = field(default=10_000, metadata={"help": "Save checkpoint every X updates steps."})
-    eval_steps: int = field(default=5_000, metadata={"help": "Run evaluation every X updates steps."})
+    eval_steps: int = field(default=1_000, metadata={"help": "Run evaluation every X updates steps."})
     dataloader_num_workers: int = field(
         default=4, metadata={"help": "Number of subprocesses to use for data loading."}
     )

@@ -1,9 +1,40 @@
 import os
 import typing
 import datasets
+import torch
+import transformers
 
 
-def create_dataloaders(
+class CommentRegressorDataCollator(transformers.DefaultDataCollator):
+    """Data collator for comment regression tasks."""
+
+    def __init__(self, tokenizer, max_length=None):
+        """Initialize the data collator.
+
+        Args:
+            tokenizer: The tokenizer to use.
+            max_length: The maximum length of the input text.
+        """
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __call__(
+            self,
+            features: typing.List[typing.Dict[str, typing.Any]],
+            return_tensors=None
+    ) -> typing.Dict[str, typing.Any]:
+        if return_tensors is None:
+            return_tensors = self.return_tensors
+        result = transformers.default_data_collator(features, return_tensors)
+        input_r = torch.rand(
+            result.get('input_ids').shape[0],
+            1,
+            device=result.get('input_ids').device)
+        result['input_r'] = input_r
+        return result
+
+
+def create_datasets(
         train_file: str,
         validation_file: str,
         test_file: str,

@@ -55,11 +55,7 @@ class CommentRegressor(nn.Module):
     ):
         output = self.bert(input_ids=input_ids, attention_mask=attention_mask).pooler_output
         output = output.to(self.dtype)
-
-        if input_r is None:
-            input_r = torch.rand(input_ids.shape[0], 1, device=input_ids.device, dtype=self.dtype)
-        else:
-            input_r = input_r.to(self.dtype)
+        input_r = input_r.to(self.dtype)
 
         h = torch.cat([output, input_r], dim=1)
         h = self.fc1(h)
@@ -73,7 +69,6 @@ class CommentRegressor(nn.Module):
         stddev = torch.sigmoid(h[:, 1]) * 5.0 + 0.01
 
         return mean, stddev
-
 
     def recalibrate(
             self,
