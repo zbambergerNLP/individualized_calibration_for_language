@@ -38,7 +38,8 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
             tokenizer: transformers.PreTrainedTokenizerBase = None,
             model_init: typing.Callable[[], torch.nn.Module] = None,
             compute_metrics: typing.Callable[
-                [individualized_calibration_model.CommentRegressorPrediction, bool], typing.Dict] = None,
+                [individualized_calibration_model.CommentRegressorPrediction, typing.Optional[bool]],
+                typing.Dict] = None,
             callbacks: typing.List[transformers.TrainerCallback] = None,
             optimizers: typing.Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
             preprocess_logits_for_metrics: typing.Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
@@ -268,6 +269,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         stddevs_host = None
         labels_host = None
         inputs_host = None
+        input_rs_host = None
 
         # losses/preds/labels on CPU (final containers)
         all_losses = None
@@ -275,6 +277,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         all_stddevs = None
         all_labels = None
         all_inputs = None
+        all_input_rs = None
         # Will be useful when we have an iterable dataset so don't know its length.
 
         observed_num_examples = 0
@@ -292,6 +295,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
             loss, mean, stddev, labels = self.prediction_step(
                 model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
             inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
+            input_r = inputs["input_r"].to(loss.device)
 
             # Update containers on host
             if loss is not None:
@@ -316,8 +320,12 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                 stddevs_host = stddevs if stddevs_host is None else nested_concat(
                     stddevs_host, stddevs, padding_index=-100)
             if labels is not None:
-                labels = self.accelerator.gather_for_metrics((labels))
+                labels = self.accelerator.gather_for_metrics((labels.repeat(batch_size)))
                 labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
+            if input_r is not None:
+                input_rs = self.accelerator.gather_for_metrics((input_r))
+                input_rs_host = input_rs if input_rs_host is None else nested_concat(
+                    input_rs_host, input_rs, padding_index=-100)
 
             self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
 
@@ -351,9 +359,19 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                     all_stddevs = (
                         stddevs if all_stddevs is None else nested_concat(all_stddevs, stddevs, padding_index=-100)
                     )
+                if input_rs_host is not None:
+                    input_rs = nested_numpify(input_rs_host)
+                    all_input_rs = (
+                        input_rs if all_input_rs is None else nested_concat(all_input_rs, input_rs, padding_index=-100)
+                    )
 
                 # Set back to None to begin a new accumulation
-                losses_host, means_host, stddevs_host, inputs_host, labels_host = None, None, None, None, None
+                (losses_host,
+                 means_host,
+                 stddevs_host,
+                 inputs_host,
+                 labels_host,
+                 input_rs_host) = (None, None, None, None, None, None)
 
         if args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop
@@ -377,6 +395,11 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         if stddevs_host is not None:
             stddevs = nested_numpify(stddevs_host)
             all_stddevs = stddevs if all_stddevs is None else nested_concat(all_stddevs, stddevs, padding_index=-100)
+        if input_rs_host is not None:
+            input_rs = nested_numpify(input_rs_host)
+            all_input_rs = (
+                input_rs if all_input_rs is None else nested_concat(all_input_rs, input_rs, padding_index=-100)
+            )
 
         # Number of samples
         if has_length(eval_dataset):
@@ -401,21 +424,23 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                 all_labels is not None
         ):
             if args.include_inputs_for_metrics:
+                # TODO: Add input_r
                 metrics = self.compute_metrics(
                     individualized_calibration_model.CommentRegressorPrediction(
                         means=all_means,
                         stddevs=all_stddevs,
                         label_ids=all_labels,
-                        inputs=all_inputs,
+                        input_r=all_input_rs,
                     )
                 )
             else:
+                # TODO: Add input_r
                 metrics = self.compute_metrics(
                     individualized_calibration_model.CommentRegressorPrediction(
                         means=all_means,
                         stddevs=all_stddevs,
                         label_ids=all_labels,
-                        inputs=None,
+                        input_r=all_input_rs
                     )
                 )
         else:

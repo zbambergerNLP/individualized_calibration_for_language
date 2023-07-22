@@ -14,10 +14,10 @@ class CommentRegressorPrediction(typing.NamedTuple):
     """
     Prediction output for a CommentRegressor.
     """
-    means: np.ndarray
-    stddevs: np.ndarray
-    label_ids: np.ndarray
-    inputs: typing.Optional[typing.Dict[str, typing.Any]]
+    means: np.ndarray       # The predicted means of the Gaussian distribution. Of shape [batch_size, 1]
+    stddevs: np.ndarray     # The predicted standard deviations of the Gaussian distribution. Of shape [batch_size, 1]
+    label_ids: np.ndarray   # The true labels. Of shape [batch_size, 1]
+    input_r: np.ndarray     # The random values used as input to the model. Of shape [batch_size, 1]
 
 
 class CommentRegressor(nn.Module):
@@ -38,7 +38,10 @@ class CommentRegressor(nn.Module):
         self.drop_prob = drop_prob
 
         # Extract the text encoder from the pretrained model for text classification.
-        self.bert = BertForSequenceClassification.from_pretrained(text_encoder_model_name).bert
+        # TODO: Change verbosity so that loading BERT does not print a wall of text.
+        self.bert = BertForSequenceClassification.from_pretrained(
+            text_encoder_model_name,
+        ).bert
 
         # Construct the MLP for predicting the mean and standard deviation following the text encoder.
         # TODO: Consider running experiments with different model architectures following the text classifier.

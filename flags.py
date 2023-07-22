@@ -35,9 +35,6 @@ class TrainingArguments:
     lr_scheduler_type: Optional[str] = field(
         default="linear", metadata={"help": "The LR scheduler to use. Can be 'linear' or 'cosine'."}
     )
-    training_seed: Optional[int] = field(
-        default=42, metadata={"help": "The seed to use for training."}
-    )
     num_train_epochs: int = field(
         default=3, metadata={"help": "Total number of training epochs to perform."}
     )
@@ -46,11 +43,13 @@ class TrainingArguments:
     warmup_ratio: int = field(default=0.1, metadata={"help": "The ratio of warmup steps to total training steps."})
     logging_steps: int = field(default=100, metadata={"help": "Log every X updates steps."})
     save_steps: int = field(default=10_000, metadata={"help": "Save checkpoint every X updates steps."})
-    eval_steps: int = field(default=1_000, metadata={"help": "Run evaluation every X updates steps."})
+    # TODO: Switch eval_steps back to 1_000 after debugging.
+    eval_steps: int = field(default=50, metadata={"help": "Run evaluation every X updates steps."})
     dataloader_num_workers: int = field(
-        default=4, metadata={"help": "Number of subprocesses to use for data loading."}
+        default=20, metadata={"help": "Number of subprocesses to use for data loading."}
     )
     deepspeed: str = field(default="zero_stage2.json", metadata={"help": "The path to the deepspeed config file."})
+    seed: int = field(default=42, metadata={"help": "The seed to use for training."})
 
     def __post_init__(self):
         if self.output_dir is not None:
@@ -76,9 +75,6 @@ class ModelArguments:
     use_fast_tokenizer: bool = field(
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."}
-    )
-    seed: int = field(
-        default=42, metadata={"help": "random seed for initialization"}
     )
     tokenizer_batch_size: int = field(
         default=16, metadata={"help": "The batch size used when tokenizing the dataset."}
@@ -112,9 +108,17 @@ class DataArguments:
         default='data/test_data.csv',
         metadata={"help": "Path to testing data file"},
     )
-
-    data_seed: int = field(
-        default=42, metadata={"help": "random seed for initialization of the data."}
+    sample_train_examples: Optional[int] = field(
+        default=None,
+        metadata={"help": "The number of training examples to use. If None, use all examples."},
+    )
+    sample_validation_examples: Optional[int] = field(
+        default=1_000,  # TODO: Set this to None once we're done debugging.
+        metadata={"help": "The number of validation examples to use. If None, use all examples."},
+    )
+    sample_test_examples: Optional[int] = field(
+        default=None,
+        metadata={"help": "The number of testing examples to use. If None, use all examples."},
     )
     max_seq_length: Optional[int] = field(
         default=512,

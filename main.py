@@ -1,7 +1,7 @@
+import numpy as np
 from accelerate import Accelerator
 import wandb
 
-import math
 import flags
 import os
 import typing
@@ -11,8 +11,6 @@ import model as comment_regressor
 import datasets
 import torch
 import transformers
-import pandas as pd
-from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
 
 import data
 from trainer import RandomizedIndividualCalibrationTrainer
@@ -39,7 +37,8 @@ from transformers import TrainingArguments, AutoTokenizer
 # The above command will request 4 GPU and 20 CPU cores. You can change these values as needed.
 # Note that you will need to adjust the partition and account to match your Newton account.
 
-accelerator = Accelerator(log_with="wandb")
+# accelerator = Accelerator(log_with="wandb")
+accelerator = Accelerator()
 
 
 def main():
@@ -49,6 +48,15 @@ def main():
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+
+    # Establish determinism for reproducibility. Use provided seed
+    # if one was provided. Otherwise, generate a random seed.
+    if training_args.seed is None:
+        training_args.seed = int(torch.randint(2 ** 32, (1,)))
+    torch.manual_seed(training_args.seed)
+    torch.cuda.manual_seed_all(training_args.seed)
+    np.random.seed(training_args.seed)
+    transformers.set_seed(training_args.seed)
 
     def tokenizer_function(
             example: typing.Dict[str, typing.Any],
@@ -104,7 +112,15 @@ def main():
             os.path.join('data', tokenized_test_dataset_name),
         )
 
-    # Load pretrained model
+    # Sample examples according to user specifications from flags and create a new dataset
+    # with the sampled examples.
+    if data_args.sample_train_examples:
+        train_dataset['train'] = train_dataset['train'].select(range(data_args.sample_train_examples))
+    if data_args.sample_validation_examples:
+        validation_dataset['train'] = validation_dataset['train'].select(range(data_args.sample_validation_examples))
+    if data_args.sample_test_examples:
+        test_dataset['train'] = test_dataset['train'].select(range(data_args.sample_test_examples))
+
     if accelerator.is_local_main_process:
         # fetch the run_id from your wandb workspace
         last_run_id = training_args.last_run_id if training_args.local_checkpoint_path else None
@@ -117,8 +133,12 @@ def main():
             "tokenizer_batch_size": model_args.tokenizer_batch_size,
             "learning_rate": training_args.learning_rate,
             "num_train_epochs": training_args.num_train_epochs,
-            "training_seed": training_args.training_seed,
+            "seed": training_args.seed,
             "warmup_ratio": training_args.warmup_ratio,
+            "weight_decay": training_args.weight_decay,
+            "sample_train_examples": data_args.sample_train_examples,
+            "sample_validation_examples": data_args.sample_validation_examples,
+            "sample_test_examples": data_args.sample_test_examples,
         }
         wandb.init(
             project="individual_calibration_for_language",
@@ -138,7 +158,7 @@ def main():
     # Define training arguments
     training_arguments = TrainingArguments(
         run_name=training_args.run_name,
-        report_to=["wandb"],
+        # report_to=["wandb"],
         load_best_model_at_end=True,
         output_dir=training_args.output_dir,
         remove_unused_columns=False,
@@ -150,8 +170,8 @@ def main():
         per_device_train_batch_size=training_args.per_device_train_batch_size,
         per_device_eval_batch_size=training_args.per_device_eval_batch_size,
         learning_rate=training_args.learning_rate,
-        seed=training_args.training_seed,
-        data_seed=data_args.data_seed,
+        seed=training_args.seed,
+        data_seed=training_args.seed,
         optim=training_args.optimizer,
         lr_scheduler_type=training_args.lr_scheduler_type,
         warmup_ratio=training_args.warmup_ratio,
@@ -159,6 +179,7 @@ def main():
         label_names=["labels"],
         logging_dir="./logs",
         logging_steps=training_args.logging_steps,
+        include_inputs_for_metrics=True,
         # Parameters to increase the efficiency of the training.
         fp16=True,
         dataloader_num_workers=training_args.dataloader_num_workers if torch.cuda.is_available() else 0,
