@@ -33,7 +33,12 @@ def compute_metrics(
     input_r = torch.as_tensor(eval_pred.input_r, dtype=torch.float32)
     means = torch.as_tensor(eval_pred.means, dtype=torch.float32)
     stddevs = torch.as_tensor(eval_pred.stddevs, dtype=torch.float32)
+    groups = {
+        group_name: torch.as_tensor(group_values, dtype=torch.float32)
+        for group_name, group_values in eval_pred.groups.items()
+    }
 
+    # TODO: Use groups to compute group metrics.
     if eval_with_sample:
         # Sample from the CDF to get the predicted values.
         pred_values = torch.normal(means, stddevs)

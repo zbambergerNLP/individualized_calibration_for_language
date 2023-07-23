@@ -6,6 +6,8 @@ import numpy as np
 import torch
 import transformers
 from datetime import datetime
+
+import data_preprocessing
 import model as individualized_calibration_model
 
 from torch.utils.data import DataLoader
@@ -270,6 +272,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         labels_host = None
         inputs_host = None
         input_rs_host = None
+        groups_host = {}
 
         # losses/preds/labels on CPU (final containers)
         all_losses = None
@@ -278,6 +281,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         all_labels = None
         all_inputs = None
         all_input_rs = None
+        all_groups = {}
         # Will be useful when we have an iterable dataset so don't know its length.
 
         observed_num_examples = 0
@@ -296,6 +300,10 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                 model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
             inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
             input_r = inputs["input_r"].to(loss.device)
+
+            groups = {}
+            for group_name in data_preprocessing.GROUP_LIST:
+                groups[group_name] = inputs.pop(group_name).to(loss.device)
 
             # Update containers on host
             if loss is not None:
@@ -323,9 +331,17 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                 labels = self.accelerator.gather_for_metrics((labels.repeat(batch_size)))
                 labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
             if input_r is not None:
+                # TODO: Investigate why input_r does not need to be repeated like loss, mean, stddev, labels above.
                 input_rs = self.accelerator.gather_for_metrics((input_r))
                 input_rs_host = input_rs if input_rs_host is None else nested_concat(
                     input_rs_host, input_rs, padding_index=-100)
+            if groups != {}:
+                for group in groups:
+                    groups[group] = self.accelerator.gather_for_metrics((groups[group]))
+                    if group not in groups_host:
+                        groups_host[group] = groups[group]
+                    else:
+                        groups_host[group] = nested_concat(groups_host[group], groups[group], padding_index=-100)
 
             self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
 
@@ -364,6 +380,14 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                     all_input_rs = (
                         input_rs if all_input_rs is None else nested_concat(all_input_rs, input_rs, padding_index=-100)
                     )
+                if groups_host is not None:
+                    for group in groups_host:
+                        groups[group] = nested_numpify(groups_host[group])
+                        all_groups[group] = (
+                            groups[group] if all_groups[group] is None else nested_concat(
+                                all_groups[group], groups[group], padding_index=-100,
+                            )
+                        )
 
                 # Set back to None to begin a new accumulation
                 (losses_host,
@@ -372,6 +396,7 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                  inputs_host,
                  labels_host,
                  input_rs_host) = (None, None, None, None, None, None)
+                groups_host = {}
 
         if args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop
@@ -400,6 +425,14 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
             all_input_rs = (
                 input_rs if all_input_rs is None else nested_concat(all_input_rs, input_rs, padding_index=-100)
             )
+        if groups_host != {}:
+            for group_name in groups_host:
+                group = nested_numpify(groups_host[group_name])
+                all_groups[group_name] = (
+                    group if group_name not in all_groups else nested_concat(
+                        all_groups[group], group, padding_index=-100,
+                    )
+                )
 
         # Number of samples
         if has_length(eval_dataset):
@@ -424,23 +457,23 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                 all_labels is not None
         ):
             if args.include_inputs_for_metrics:
-                # TODO: Add input_r
                 metrics = self.compute_metrics(
                     individualized_calibration_model.CommentRegressorPrediction(
                         means=all_means,
                         stddevs=all_stddevs,
                         label_ids=all_labels,
                         input_r=all_input_rs,
-                    )
+                        groups=all_groups,
+                    ),
                 )
             else:
-                # TODO: Add input_r
                 metrics = self.compute_metrics(
                     individualized_calibration_model.CommentRegressorPrediction(
                         means=all_means,
                         stddevs=all_stddevs,
                         label_ids=all_labels,
-                        input_r=all_input_rs
+                        input_r=all_input_rs,
+                        groups=all_groups,
                     )
                 )
         else:

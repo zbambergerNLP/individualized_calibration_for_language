@@ -4,6 +4,8 @@ import datasets
 import torch
 import transformers
 
+import data_preprocessing
+
 
 class CommentRegressorDataCollator(transformers.DefaultDataCollator):
     """Data collator for comment regression tasks."""
@@ -31,6 +33,18 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
             1,
             device=result.get('input_ids').device)
         result['input_r'] = input_r
+        for group in data_preprocessing.GROUP_LIST:
+            group_values = []
+            for example in features:
+                if group not in example:
+                    group_values.append(-1)  # TODO: Note that -1 implies that the feature is not present.
+                else:
+                    group_values.append(example[group])
+            result[group] = torch.tensor(
+                group_values,
+                dtype=torch.float,
+                device=result.get('input_ids').device,
+            )
         return result
 
 
@@ -59,42 +73,32 @@ def create_datasets(
         "csv",
         data_files=train_file,
     )
-
     validation_dataset = datasets.load_dataset(
         "csv",
         data_files=validation_file,
     )
-
     test_dataset = datasets.load_dataset(
         "csv",
         data_files=test_file,
     )
-
-    print(f'Train dataset: {train_dataset}')
-    print(f'Validation dataset: {validation_dataset}')
-    print(f'Test dataset: {test_dataset}')
-
     tokenized_train_dataset = train_dataset.map(
         function=tokenizer_function,
         batched=True,
         batch_size=batch_size,
         num_proc=os.cpu_count(),  # Use all CPU cores.
     )
-
     tokenized_validation_dataset = validation_dataset.map(
         function=tokenizer_function,
         batched=True,
         batch_size=batch_size,
         num_proc=os.cpu_count(),  # Use all CPU cores.
     )
-
     tokenized_test_dataset = test_dataset.map(
         function=tokenizer_function,
         batched=True,
         batch_size=batch_size,
         num_proc=os.cpu_count(),  # Use all CPU cores.
     )
-
     tokenized_train_dataset.set_format(
         type='torch',
         columns=['input_ids', 'attention_mask', 'labels'],

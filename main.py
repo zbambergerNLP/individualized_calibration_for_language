@@ -2,6 +2,7 @@ import numpy as np
 from accelerate import Accelerator
 import wandb
 
+import data_preprocessing
 import flags
 import os
 import typing
@@ -176,6 +177,7 @@ def main():
         lr_scheduler_type=training_args.lr_scheduler_type,
         warmup_ratio=training_args.warmup_ratio,
         weight_decay=training_args.weight_decay,
+        # Labels consist of group scores as well as a toxicity label
         label_names=["labels"],
         logging_dir="./logs",
         logging_steps=training_args.logging_steps,
@@ -198,6 +200,7 @@ def main():
         data_collator=data_collator,
         train_dataset=train_dataset['train'],
         eval_dataset=validation_dataset['train'],
+        coefficient=training_args.coefficient,
         callbacks=[
             transformers.EarlyStoppingCallback(early_stopping_patience=3),  # TODO: Make this a flag.
         ],

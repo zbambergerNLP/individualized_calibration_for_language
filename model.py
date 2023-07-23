@@ -19,6 +19,9 @@ class CommentRegressorPrediction(typing.NamedTuple):
     label_ids: np.ndarray   # The true labels. Of shape [batch_size, 1]
     input_r: np.ndarray     # The random values used as input to the model. Of shape [batch_size, 1]
 
+    # The group information for each sample. Of shape [batch_size, 1]. The string key is the group name.
+    groups: typing.Dict[str, np.ndarray]
+
 
 class CommentRegressor(nn.Module):
     """
