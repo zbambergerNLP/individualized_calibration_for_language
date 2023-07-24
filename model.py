@@ -47,7 +47,6 @@ class CommentRegressor(nn.Module):
         ).bert
 
         # Construct the MLP for predicting the mean and standard deviation following the text encoder.
-        # TODO: Consider running experiments with different model architectures following the text classifier.
         self.fc1 = nn.Linear(self.bert.config.hidden_size + 1, self.mlp_hidden, dtype=dtype)
         self.fc2 = nn.Linear(self.mlp_hidden + 1, self.mlp_hidden, dtype=dtype)
         self.drop = nn.Dropout(drop_prob)
@@ -76,33 +75,49 @@ class CommentRegressor(nn.Module):
 
         return mean, stddev
 
-    def recalibrate(
+class CalibrationLayer(nn.Module):
+    """
+    Calibration layer for a CommentRegressor.
+    """
+
+    def __init__(self):
+        super(CalibrationLayer, self).__init__()
+
+        self.a = nn.Parameter(torch.Tensor([1]))
+        self.b = nn.Parameter(torch.Tensor([0]))
+        self.c = nn.Parameter(torch.Tensor([0]))
+        self.d = nn.Parameter(torch.Tensor([1]))
+
+    def forward(
             self,
-            input_ids: torch.Tensor,  # Tensor of input token ids of shape [batch_size, max_seq_len, vocab_size],
+            mean: torch.Tensor,
+            std: torch.Tensor,
+    ):
+        calibrated_mean = self.a * mean + self.b * std
+        calibrated_std = self.c * mean + self.d * std
+
+        return calibrated_mean, torch.abs(calibrated_std)
+
+
+class CalibratedCommentRegressor(nn.Module):
+    """
+    A trained model for predicting the mean and standard deviation of a Gaussian distribution, and on top a calibration layer.
+    """
+
+    def __init__(
+            self,
+            comment_regressor: CommentRegressor):
+        super(CalibratedCommentRegressor, self).__init__()
+
+        self.comment_regressor = comment_regressor
+        self.calibration_layer = CalibrationLayer()
+
+    def forward(
+            self,
+            input_ids: torch.Tensor,  # Tensor of input token ids of shape [batch_size, max_seq_len, vocab_size]
             attention_mask: torch.Tensor = None,  # Tensor of attention masks of shape [batch_size, max_seq_len]
             input_r: torch.Tensor = None,  # Tensor of random values of shape [batch_size, 1]
-            label_ids: torch.Tensor = None,  # Tensor of label ids of shape [batch_size]
-    ):
-        with torch.no_grad():
-            outputs = self.model.forward(input_ids, attention_mask, input_r)
-            mean, stddev = outputs
-            cdf = (0.5 * (1.0 + torch.erf((label_ids - mean) / stddev / math.sqrt(2)))).cpu().numpy()[:, 0].astype(np.float)
+        ):
+        mean, stddev = self.comment_regressor(input_ids, attention_mask, input_r)
+        return self.calibration_layer(mean, stddev)
 
-        cdf = np.sort(cdf)
-        lin = np.linspace(0, 1, int(cdf.shape[0]))
-
-        # Insert an extra 0 and 1 to ensure the range is always [0, 1], and trim CDF for numerical stability
-        cdf = np.clip(cdf, a_max=1.0 - 1e-6, a_min=1e-6)
-        cdf = np.insert(np.insert(cdf, -1, 1), 0, 0)
-        lin = np.insert(np.insert(lin, -1, 1), 0, 0)
-
-        iso_transform = IsotonicRegression()
-        iso_transform.fit_transform(cdf, lin)
-        self.iso_transform = iso_transform
-
-    def apply_recalibrate(self, cdf):
-        if self.iso_transform is not None:
-            original_shape = cdf.shape
-            return np.reshape(self.iso_transform.transform(cdf.flatten()), original_shape)
-        else:
-            return cdf

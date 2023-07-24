@@ -2,7 +2,7 @@ import math
 
 import torch
 import model as individualized_calibration_model
-from sklearn.metrics import recall_score, f1_score, precision_score, accuracy_score
+from sklearn.metrics import confusion_matrix, roc_auc_score
 from data_preprocessing import GROUP_LIST
 
 
@@ -38,7 +38,9 @@ def compute_metrics(
         for group_name, group_values in eval_pred.groups.items()
     }
 
-    # TODO: Use groups to compute group metrics.
+    tmp_metrics_dict = {}
+    metrics_dict = {}
+
     if eval_with_sample:
         # Sample from the CDF to get the predicted values.
         pred_values = torch.normal(means, stddevs)
@@ -53,48 +55,43 @@ def compute_metrics(
     pred_labels = (pred_values > 0.5).int()
     target_labels = (target > 0.5).int()
 
-    # Load the eval_set.csv file
-    # df = pd.read_csv("data/eval_set.csv")
-    group_metrics = {}
+    # Since we are evaluating on the entire evaluation set, we can compute the metrics for each group in a constant
+    # set of groups.
+    for group_name in groups.keys():
+        group_mask = ~torch.isnan(groups[group_name]) & (groups[group_name] >= 0.5)  # This determines which samples belong to the group
+        tmp_metrics_dict[group_name] = compute_metrics_from_pred(
+            input_r=input_r,
+            mean=means,
+            stddev=stddevs,
+            pred_labels=pred_labels,
+            target_labels=target_labels,
+            target=target,
+            group_mask=group_mask,
+        )
 
-    # TODO: Uncomment the below when we can access group information directly from the eval_pred object.
-    #
-    # # Since we are evaluating on the entire evaluation set, we can compute the metrics for each group in a constant
-    # # set of groups.
-    # for group in GROUP_LIST:
-    #     group_mask = df[group].notna() & (df[group] >= 0.5)  # This determines which samples belong to the group
-    #     group_metrics = compute_metrics_from_pred(
-    #         input_r=input_r[group_mask],
-    #         mean=means[group_mask],
-    #         stddev=stddevs[group_mask],
-    #         pred_labels=pred_labels[group_mask],
-    #         target_labels=target_labels[group_mask],
-    #         target=target[group_mask],
-    #     )
-    #
-    #     # Add each metric from the group to the group_metrics dictionary
-    #     for metric in group_metrics.keys():
-    #         metric_name = f"{group}_{metric}"
-    #         group_metrics[metric_name] = group_metrics[metric]
-    #
-    # # for each metric, Compute the biggest differences between the groups
-    # for metric in group_metrics[GROUP_LIST[0]].keys():
-    #     min_val = min([group_metrics[f'{group}_{metric}'] for group in GROUP_LIST])
-    #     max_val = max([group_metrics[f'{group}_{metric}'] for group in GROUP_LIST])
-    #     metric_name = f"biggest_diffs_{metric}"
-    #     group_metrics[metric_name] = max_val - min_val
+    # Update the metrics_dict with the tmp_metrics_dict
+    for group_name in groups.keys():
+        for metric in tmp_metrics_dict[group_name].keys():
+            metrics_dict[group_name + "_" + metric] = tmp_metrics_dict[group_name][metric]
+
+    # for each metric, Compute the biggest differences between the groups
+    for metric in tmp_metrics_dict[groups.keys()[0]].keys():
+        min_metric = min([tmp_metrics_dict[group_name][metric] for group_name in groups.keys()])
+        max_metric = max([tmp_metrics_dict[group_name][metric] for group_name in groups.keys()])
+        metrics_dict[f"biggest_diffs_{metric}"] = max_metric - min_metric
 
     # Compute metrics for the full dataset
-    group_metrics.update(compute_metrics_from_pred(
+    metrics_dict.update(compute_metrics_from_pred(
         input_r=input_r,
         mean=means,
         stddev=stddevs,
         pred_labels=pred_labels,
         target_labels=target_labels,
-        target=target)
-    )
+        target=target,
+        group_mask=torch.ones_like(target, dtype=torch.bool),
+        full_dataset=True,))
 
-    return group_metrics
+    return metrics_dict
 
 
 def compute_metrics_from_pred(
@@ -104,33 +101,60 @@ def compute_metrics_from_pred(
         pred_labels: torch.Tensor = None,
         target_labels: torch.Tensor = None,
         target: torch.Tensor = None,
+        group_mask: torch.Tensor = None,
+        full_dataset: bool = False,
 ) -> dict[str, float]:
+
     # Calculate the losses
-    cdf = 0.5 * (1.0 + torch.erf((target - mean) / stddev / math.sqrt(2)))
-    loss_cdf = torch.abs(cdf - input_r).mean()
-    loss_stddev = stddev.mean()
-    loss_nll = torch.log(stddev) + math.log(2 * math.pi) / 2.0 + (((target - mean) / stddev) ** 2 / 2.0)
+    cdf = 0.5 * (1.0 + torch.erf((target[group_mask] - mean[group_mask]) / stddev[group_mask] / math.sqrt(2)))
+    loss_cdf = torch.abs(cdf - input_r[group_mask]).mean()
+    loss_stddev = stddev[group_mask].mean()
+    loss_nll = torch.log(stddev[group_mask]) + math.log(2 * math.pi) / 2.0 + \
+               (((target[group_mask] - mean[group_mask]) / stddev[group_mask]) ** 2 / 2.0)
     loss_nll = loss_nll.mean()
 
     # Calculate the average TPR, FPR, precision, F1 and accuracy
-    precision = precision_score(target_labels, pred_labels)
-    recall = recall_score(target_labels, pred_labels)  # TPR
-    f1 = f1_score(target_labels, pred_labels)
-    accuracy = accuracy_score(target_labels, pred_labels)
+    tn, fp, fn, tp = confusion_matrix(target_labels[group_mask], pred_labels[group_mask]).ravel()
 
-    # FPR = FP / (FP + TN) = 1 - TNR, where TNR (True Negative Rate) = TN / (FP + TN) = 1 - FPR
-    # So, we can calculate FPR as 1 - recall of the negative class
-    fpr = 1 - recall_score(1 - target_labels, 1 - pred_labels)
+    # False Positive Rate - The proportion of negative instances that are incorrectly classified as positive
+    fpr = fp / (fp + tn)
+
+    # True Positive Rate (recall) - The proportion of positive instances that are correctly classified as positive
+    tpr = tp / (tp + fn)
+
+    # Accuracy - the number of correct predictions made by the model, divided by the total number of predictions
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+
+    # Precision - the proportion of true positive predictions among all positive predictions
+    precision = tp / (tp + fp)
+
+    # F1 - the harmonic mean of precision and recall
+    f1 = 2 * (precision * tpr) / (precision + tpr)
 
     # Return those metrics
     metrics = {
         'loss_cdf': loss_cdf,
         'loss_stddev': loss_stddev,
         'loss_nll': loss_nll,
-        'TPR': recall,
+        'TPR': tpr,
         'FPR': fpr,
         'Precision': precision,
         'F1': f1,
         'Accuracy': accuracy,
     }
+
+    if not full_dataset:
+        # BPSN (Background Positive, Subgroup Negative) AUC -
+        # Restrict the test set to non-abusive examples that mention the identity and abusive examples that do not.
+        bpsn_mask = (target_labels & ~group_mask) | (~target_labels & group_mask)
+        bpsn_auc = roc_auc_score(target_labels[bpsn_mask].cpu().numpy(), pred_labels[bpsn_mask].cpu().numpy())
+
+        # BNSP (Background Negative, Subgroup Positive) AUC -
+        # Restrict the test set to abusive examples that mention the identity and non-abusive examples that do not.
+        bnsp_mask = (target_labels & group_mask) | (~target_labels & ~group_mask)
+        bnsp_auc = roc_auc_score(target_labels[bnsp_mask].cpu().numpy(), pred_labels[bnsp_mask].cpu().numpy())
+
+        metrics['BPSN_AUC'] = bpsn_auc
+        metrics['BNSP_AUC'] = bnsp_auc
+
     return metrics
