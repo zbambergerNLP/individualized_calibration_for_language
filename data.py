@@ -25,6 +25,7 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
             features: typing.List[typing.Dict[str, typing.Any]],
             return_tensors=None
     ) -> typing.Dict[str, typing.Any]:
+        print(f'\n\nfeatures is: {features}')
         if return_tensors is None:
             return_tensors = self.return_tensors
         result = transformers.default_data_collator(features, return_tensors)
@@ -45,6 +46,7 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
                 dtype=torch.float,
                 device=result.get('input_ids').device,
             )
+        print(f'result: {result}')
         return result
 
 

@@ -75,6 +75,7 @@ class CommentRegressor(nn.Module):
 
         return mean, stddev
 
+
 class CalibrationLayer(nn.Module):
     """
     Calibration layer for a CommentRegressor.

@@ -27,7 +27,7 @@ class TrainingArguments:
         default=16, metadata={"help": "Batch size per device during training."}
     )
     per_device_eval_batch_size: int = field(
-        default=128, metadata={"help": "Batch size per device for evaluation."}
+        default=64, metadata={"help": "Batch size per device for evaluation."}
     )
     optimizer: Optional[str] = field(
         default="adamw_hf", metadata={"help": "The optimizer to use. Can be 'adamw' or 'adafactor'."}
@@ -41,10 +41,13 @@ class TrainingArguments:
     coefficient: float = field(
         default=0.8, metadata={"help": "The coefficient for the calibration loss."}
     )
-    learning_rate: float = field(default=5e-3, metadata={"help": "The initial learning rate for AdamW."})
+    learning_rate: float = field(default=1e-4, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
     warmup_ratio: int = field(default=0.1, metadata={"help": "The ratio of warmup steps to total training steps."})
     logging_steps: int = field(default=100, metadata={"help": "Log every X updates steps."})
+    eval_accumulation_steps: int = field(
+        default=4, metadata={"help": "Number of eval steps to accumulate before performing backward pass."}
+    )
     save_steps: int = field(default=10_000, metadata={"help": "Save checkpoint every X updates steps."})
     # TODO: Switch eval_steps back to 1_000 after debugging.
     eval_steps: int = field(default=50, metadata={"help": "Run evaluation every X updates steps."})
@@ -116,7 +119,7 @@ class DataArguments:
         metadata={"help": "The number of training examples to use. If None, use all examples."},
     )
     sample_validation_examples: Optional[int] = field(
-        default=1_000,  # TODO: Set this to None once we're done debugging.
+        default=None,  # TODO: Set this to None once we're done debugging.
         metadata={"help": "The number of validation examples to use. If None, use all examples."},
     )
     sample_test_examples: Optional[int] = field(

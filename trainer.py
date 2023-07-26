@@ -320,15 +320,19 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                     else nested_concat(inputs_host, inputs_decode, padding_index=-100)
                 )
             if mean is not None:
-                means = self.accelerator.gather_for_metrics((mean.repeat(batch_size)))
-                means_host = means if means_host is None else nested_concat(
-                    means_host, means, padding_index=-100)
+                means = self.accelerator.pad_across_processes(mean, dim=1, pad_index=-100).contiguous()
+                mean = self.accelerator.gather_for_metrics((means))
+                means_host = mean if means_host is None else nested_concat(means_host, mean, padding_index=-100)
             if stddev is not None:
-                stddevs = self.accelerator.gather_for_metrics((stddev.repeat(batch_size)))
-                stddevs_host = stddevs if stddevs_host is None else nested_concat(
-                    stddevs_host, stddevs, padding_index=-100)
+                stddevs = self.accelerator.pad_across_processes(stddev, dim=1, pad_index=-100)
+                stddevs = self.accelerator.gather_for_metrics((stddevs))
+                stddevs_host = (
+                    stddevs
+                    if stddevs_host is None
+                    else nested_concat(stddevs_host, stddevs, padding_index=-100)
+                )
             if labels is not None:
-                labels = self.accelerator.gather_for_metrics((labels.repeat(batch_size)))
+                labels = self.accelerator.gather_for_metrics((labels))
                 labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
             if input_r is not None:
                 # TODO: Investigate why input_r does not need to be repeated like loss, mean, stddev, labels above.
@@ -341,6 +345,9 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                     if group not in groups_host:
                         groups_host[group] = groups[group]
                     else:
+                        groups[group] = self.accelerator.pad_across_processes(
+                            groups_host[group], dim=1, pad_index=-100)
+                        groups[group] = self.accelerator.gather_for_metrics((groups[group]))
                         groups_host[group] = nested_concat(groups_host[group], groups[group], padding_index=-100)
 
             self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
@@ -350,9 +357,6 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                 if losses_host is not None:
                     losses = nested_numpify(losses_host)
                     all_losses = losses if all_losses is None else np.concatenate((all_losses, losses), axis=0)
-                # if preds_host is not None:
-                #     logits = nested_numpify(preds_host)
-                #     all_preds = logits if all_preds is None else nested_concat(all_preds, logits, padding_index=-100)
                 if inputs_host is not None:
                     inputs_decode = nested_numpify(inputs_host)
                     all_inputs = (
@@ -381,11 +385,11 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
                         input_rs if all_input_rs is None else nested_concat(all_input_rs, input_rs, padding_index=-100)
                     )
                 if groups_host is not None:
-                    for group in groups_host:
-                        groups[group] = nested_numpify(groups_host[group])
-                        all_groups[group] = (
-                            groups[group] if all_groups[group] is None else nested_concat(
-                                all_groups[group], groups[group], padding_index=-100,
+                    for group_name in groups_host:
+                        group_value = nested_numpify(groups_host[group_name])
+                        all_groups[group_name] = (
+                            group_value if group_name not in all_groups else nested_concat(
+                                all_groups[group_name], group_value, padding_index=-100,
                             )
                         )
 

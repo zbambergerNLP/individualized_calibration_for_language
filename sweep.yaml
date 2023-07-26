@@ -1,0 +1,16 @@
+program: main.py
+method: bayes
+metric:
+  name: eval_loss
+  goal: minimize
+parameters:
+
+  coefficient:
+    min: 0.0
+    max: 1.0
+    type: double
+
+  learning_rate:
+    min: 0.0001
+    max: 0.1
+    type: double

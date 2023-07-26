@@ -172,6 +172,7 @@ def main():
         per_device_eval_batch_size=training_args.per_device_eval_batch_size,
         learning_rate=training_args.learning_rate,
         seed=training_args.seed,
+        eval_accumulation_steps=training_args.eval_accumulation_steps,
         data_seed=training_args.seed,
         optim=training_args.optimizer,
         lr_scheduler_type=training_args.lr_scheduler_type,
@@ -208,7 +209,7 @@ def main():
 
     # Training
     trainer.train(
-        model_path=(
+        resume_from_checkpoint=(
             training_args.local_checkpoint_path if (
                     training_args.local_checkpoint_path is not None and
                     os.path.isdir(training_args.local_checkpoint_path)

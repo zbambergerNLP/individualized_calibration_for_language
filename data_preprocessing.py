@@ -34,7 +34,8 @@ BASE_COLUMNS = [
 ]
 
 seed = 42
-BASE_DIR = '../'
+# BASE_DIR = '../'
+BASE_DIR = './'
 
 
 # Checks the distribution of the target variable in the given DataFrame.
@@ -130,6 +131,7 @@ if __name__ == "__main__":
     # Split the DataFrame into two datasets based on having null in the group labels
     mask = data[GROUP_LIST].isnull().any(axis=1)
     data_with_nulls = data[mask]
+    data_with_nulls.loc[:, GROUP_LIST] = -1.0
     data_without_nulls = data[~mask]
 
     print(f'Data with nulls dimensions: {data_with_nulls.shape}')
@@ -216,12 +218,12 @@ if __name__ == "__main__":
 
     # Create and save a histogram for the groups columns
     for group in updated_group_list:
-        create_group_histogram(clean_data, group)
+        create_group_histogram(eval_data, group)
 
     # Create and save a histogram for distribution of the different groups
     group_counts = []
     for group in updated_group_list:
-        group_counts.append((clean_data[group] > 0.5).sum())
+        group_counts.append((eval_data[group] > 0.5).sum())
 
     plt.bar(updated_group_list, group_counts, edgecolor='black')
     plt.xticks(rotation=45, ha='right')  # Rotate names 45 degrees
