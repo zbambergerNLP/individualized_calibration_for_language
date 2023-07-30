@@ -25,10 +25,21 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
             features: typing.List[typing.Dict[str, typing.Any]],
             return_tensors=None
     ) -> typing.Dict[str, typing.Any]:
-        print(f'\n\nfeatures is: {features}')
+        """
+        Collate the features into a batch.
+        :param features:
+        :type features:
+        :param return_tensors:
+        :type return_tensors:
+        :return:
+        :rtype:
+        """
         if return_tensors is None:
             return_tensors = self.return_tensors
+        # TODO: Investigate here.
+        print(f'features are: {features[0].keys()}')
         result = transformers.default_data_collator(features, return_tensors)
+        print(f'result is: {result.keys()}')
         input_r = torch.rand(
             result.get('input_ids').shape[0],
             1,
@@ -37,16 +48,12 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
         for group in data_preprocessing.GROUP_LIST:
             group_values = []
             for example in features:
-                if group not in example:
-                    group_values.append(-1)  # TODO: Note that -1 implies that the feature is not present.
-                else:
-                    group_values.append(example[group])
+                group_values.append(example[group])
             result[group] = torch.tensor(
                 group_values,
                 dtype=torch.float,
                 device=result.get('input_ids').device,
             )
-        print(f'result: {result}')
         return result
 
 

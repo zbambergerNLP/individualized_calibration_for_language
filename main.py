@@ -76,6 +76,9 @@ def main():
         )
         # Add the labels to the result. This is required by the Trainer.
         result['labels'] = example[data_args.dataset_labels_column]
+        for key, value in example.items():
+            if key not in result:
+                result[key] = value
         return result
 
     tokenized_train_dataset_name = 'tokenized_train_data.csv'  # TODO: Make this a flag
@@ -178,7 +181,6 @@ def main():
         lr_scheduler_type=training_args.lr_scheduler_type,
         warmup_ratio=training_args.warmup_ratio,
         weight_decay=training_args.weight_decay,
-        # Labels consist of group scores as well as a toxicity label
         label_names=["labels"],
         logging_dir="./logs",
         logging_steps=training_args.logging_steps,

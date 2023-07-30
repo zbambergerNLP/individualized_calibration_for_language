@@ -2,16 +2,20 @@ import logging
 import math
 import typing
 
+import datasets
 import numpy as np
 import torch
 import transformers
 from datetime import datetime
 
+from datasets import Dataset
+from transformers import is_datasets_available
+
 import data_preprocessing
 import model as individualized_calibration_model
-
 from torch.utils.data import DataLoader
 from transformers.deepspeed import deepspeed_init
+
 from transformers.trainer_pt_utils import (
     nested_detach,
     find_batch_size,
@@ -19,7 +23,7 @@ from transformers.trainer_pt_utils import (
     nested_numpify,
     IterableDatasetShard,
 )
-from transformers.trainer_utils import EvalLoopOutput, has_length, denumpify_detensorize
+from transformers.trainer_utils import EvalLoopOutput, has_length, denumpify_detensorize, seed_worker, speed_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,8 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         self.is_deepspeed_enabled = None
         self.is_fsdp_enabled = None
 
+        print(f'remove_unused_columns is: {args.remove_unused_columns}')
+
         super().__init__(
             model=model,
             args=args,
@@ -90,6 +96,8 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         now = datetime.now()
         self.date_time = now.strftime("%Y_%m_%d")
         self.hour_time = now.strftime("%H_%M")
+        print(f'training dataset is: {self.train_dataset}')
+        print(f'eval dataset is: {self.eval_dataset}')
 
     def compute_loss(
             self,
@@ -263,6 +271,8 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
         self.callback_handler.eval_dataloader = dataloader
         # Do this before wrapping.
         eval_dataset = getattr(dataloader, "dataset", None)
+        print("eval_dataset", eval_dataset)
+        print(f'eval dataset columns: {eval_dataset.column_names}')
 
         # Initialize containers
         # losses/preds/labels on GPU/TPU (accumulated for eval_accumulation_steps)
@@ -286,6 +296,8 @@ class RandomizedIndividualCalibrationTrainer(transformers.Trainer):
 
         observed_num_examples = 0
         # Main evaluation loop
+        print(f'dataloader is: {dataloader}')
+        print(f'columns are: {dataloader.dataset}')
         for step, inputs in enumerate(dataloader):
             # Update the observed num examples
             observed_batch_size = find_batch_size(inputs)
