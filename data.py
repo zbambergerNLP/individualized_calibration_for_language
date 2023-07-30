@@ -37,9 +37,7 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
         if return_tensors is None:
             return_tensors = self.return_tensors
         # TODO: Investigate here.
-        print(f'features are: {features[0].keys()}')
         result = transformers.default_data_collator(features, return_tensors)
-        print(f'result is: {result.keys()}')
         input_r = torch.rand(
             result.get('input_ids').shape[0],
             1,
@@ -110,15 +108,15 @@ def create_datasets(
     )
     tokenized_train_dataset.set_format(
         type='torch',
-        columns=['input_ids', 'attention_mask', 'labels'],
+        columns=['input_ids', 'attention_mask', 'labels'] + data_preprocessing.GROUP_LIST,
     )
     tokenized_validation_dataset.set_format(
         type='torch',
-        columns=['input_ids', 'attention_mask', 'labels'],
+        columns=['input_ids', 'attention_mask', 'labels'] + data_preprocessing.GROUP_LIST,
     )
     tokenized_test_dataset.set_format(
         type='torch',
-        columns=['input_ids', 'attention_mask', 'labels'],
+        columns=['input_ids', 'attention_mask', 'labels'] + data_preprocessing.GROUP_LIST,
     )
 
     return tokenized_train_dataset, tokenized_validation_dataset, tokenized_test_dataset

@@ -3,7 +3,6 @@ import math
 import torch
 import model as individualized_calibration_model
 from sklearn.metrics import confusion_matrix, roc_auc_score
-from data_preprocessing import GROUP_LIST
 
 
 def compute_metrics(
@@ -138,39 +137,36 @@ def compute_metrics_from_pred(
     )
     loss_nll = loss_nll.mean()
 
-    print(f'All target examples are masked: {target_labels[group_mask].sum() == 0}')
-    print(f'All predicted examples are masked: {(pred_labels[group_mask]).sum() == 0}')
+    # TODO: Consider reporting when denominators are 0.
 
     # Calculate the average TPR, FPR, precision, F1 and accuracy
-    # tn, fp, fn, tp = confusion_matrix(target_labels[group_mask], pred_labels[group_mask]).ravel()
-    confusion_matrix_result = confusion_matrix(target_labels[group_mask], pred_labels[group_mask]).ravel()
-    print(f'confusion_matrix_result is {confusion_matrix_result}')
+    tn, fp, fn, tp = confusion_matrix(target_labels[group_mask], pred_labels[group_mask]).ravel()
 
-    # # False Positive Rate - The proportion of negative instances that are incorrectly classified as positive
-    # fpr = fp / (fp + tn)
-    #
-    # # True Positive Rate (recall) - The proportion of positive instances that are correctly classified as positive
-    # tpr = tp / (tp + fn)
-    #
-    # # Accuracy - the number of correct predictions made by the model, divided by the total number of predictions
-    # accuracy = (tp + tn) / (tp + tn + fp + fn)
-    #
-    # # Precision - the proportion of true positive predictions among all positive predictions
-    # precision = tp / (tp + fp)
-    #
-    # # F1 - the harmonic mean of precision and recall
-    # f1 = 2 * (precision * tpr) / (precision + tpr)
+    # False Positive Rate - The proportion of negative instances that are incorrectly classified as positive
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+
+    # True Positive Rate (recall) - The proportion of positive instances that are correctly classified as positive
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+
+    # Accuracy - the number of correct predictions made by the model, divided by the total number of predictions
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+
+    # Precision - the proportion of true positive predictions among all positive predictions
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+
+    # F1 - the harmonic mean of precision and recall
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
 
     # Return those metrics
     metrics = {
         'loss_cdf': loss_cdf,
         'loss_stddev': loss_stddev,
         'loss_nll': loss_nll,
-        # 'TPR': tpr,
-        # 'FPR': fpr,
-        # 'Precision': precision,
-        # 'F1': f1,
-        # 'Accuracy': accuracy,
+        'Recall': recall,
+        'FPR': fpr,
+        'Precision': precision,
+        'F1': f1,
+        'Accuracy': accuracy,
     }
 
     if not full_dataset:

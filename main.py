@@ -2,7 +2,6 @@ import numpy as np
 from accelerate import Accelerator
 import wandb
 
-import data_preprocessing
 import flags
 import os
 import typing
@@ -17,29 +16,29 @@ import data
 from trainer import RandomizedIndividualCalibrationTrainer
 from transformers import TrainingArguments, AutoTokenizer
 
+"""
+To run this script using Newton:
 
-# To run this script using Newton:
-#
-# * First, run the following command: `accelerate config`.
-#   Follow the instructions to set up your acceleration configuration for future runs.
-#   - You are running on "This machine"
-#   - You are using "Multi-GPU"
-#   - You are using "1" machine (single node)
-#   - You do not wish to optimize your script with torch dynamo
-#   - You do wish to use deepspeed
-#   - You do wish to specify a deepspeed configuration file
-#   - You are using the "zero_stage2.json" deepspeed config file
-#   - You do not wand to enable `deepspeed.zero.Init` since you are not using ZeRO stage-3
-#   - You are using "4" GPUs
-#
-# * Second run the following command:
-#   srun --partition=nlp --account=nlp --gres=gpu:4  -c 20 accelerate launch main.py
-#
-# The above command will request 4 GPU and 20 CPU cores. You can change these values as needed.
-# Note that you will need to adjust the partition and account to match your Newton account.
+* First, run the following command: `accelerate config`.
+  Follow the instructions to set up your acceleration configuration for future runs.
+  - You are running on "This machine"
+  - You are using "Multi-GPU"
+  - You are using "1" machine (single node)
+  - You do not wish to optimize your script with torch dynamo
+  - You do wish to use deepspeed
+  - You do wish to specify a deepspeed configuration file
+  - You are using the "zero_stage2.json" deepspeed config file
+  - You do not wand to enable `deepspeed.zero.Init` since you are not using ZeRO stage-3
+  - You are using "4" GPUs
 
-# accelerator = Accelerator(log_with="wandb")
-accelerator = Accelerator()
+* Second run the following command:
+  srun --partition=nlp --account=nlp --gres=gpu:4  -c 20 accelerate launch main.py
+
+The above command will request 4 GPU and 20 CPU cores. You can change these values as needed.
+Note that you will need to adjust the partition and account to match your Newton account.
+"""
+
+accelerator = Accelerator(log_with="wandb")
 
 
 def main():
@@ -162,7 +161,7 @@ def main():
     # Define training arguments
     training_arguments = TrainingArguments(
         run_name=training_args.run_name,
-        # report_to=["wandb"],
+        report_to=["wandb"],
         load_best_model_at_end=True,
         output_dir=training_args.output_dir,
         remove_unused_columns=False,
@@ -209,6 +208,10 @@ def main():
         ],
     )
 
+    # See initial evaluation results
+    eval_result = trainer.evaluate(eval_dataset=test_dataset['train'])
+    print(f'Initial evaluation results:\n{eval_result}')
+
     # Training
     trainer.train(
         resume_from_checkpoint=(
@@ -218,11 +221,13 @@ def main():
             ) else None
         )
     )
+    print('Finished training!')
 
     # Evaluation
-    eval_result = trainer.evaluate(eval_dataset=test_dataset['train'])
-    print('Finished training!')
-    print(eval_result)
+    eval_result = trainer.evaluate(eval_dataset=validation_dataset['train'])
+    print(f'Validation results:\n{eval_result}')
+    test_result = trainer.evaluate(eval_dataset=test_dataset['train'])
+    print(f'Test results:\n{test_result}')
 
 
 if __name__ == "__main__":
