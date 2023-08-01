@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 from accelerate import Accelerator
 import wandb
@@ -32,13 +34,14 @@ To run this script using Newton:
   - You are using "4" GPUs
 
 * Second run the following command:
-  srun --partition=nlp --account=nlp --gres=gpu:4  -c 20 accelerate launch main.py
+  WANDB_SERVICE_WAIT=300 srun --partition=nlp --account=nlp --gres=gpu:4  -c 20 accelerate launch main.py
 
 The above command will request 4 GPU and 20 CPU cores. You can change these values as needed.
 Note that you will need to adjust the partition and account to match your Newton account.
 """
 
 accelerator = Accelerator(log_with="wandb")
+logger = logging.Logger(__name__)
 
 
 def main():
@@ -143,12 +146,21 @@ def main():
             "sample_validation_examples": data_args.sample_validation_examples,
             "sample_test_examples": data_args.sample_test_examples,
         }
-        wandb.init(
-            project="individual_calibration_for_language",
-            id=last_run_id,
+        accelerator.init_trackers(
+            project_name="individual_calibration_for_language",
             config=wandb_config,
-            resume="must" if last_run_id is not None else None,
+            init_kwargs={
+                "wandb": {
+                    "entity": "zbamberger",
+                }
+            },
         )
+        # wandb.init(
+        #     project="individual_calibration_for_language",
+        #     id=last_run_id,
+        #     config=wandb_config,
+        #     resume="must" if last_run_id is not None else None,
+        # )
 
     # Load pretrained model
     experiment_model = comment_regressor.CommentRegressor(
@@ -174,8 +186,8 @@ def main():
         per_device_eval_batch_size=training_args.per_device_eval_batch_size,
         learning_rate=training_args.learning_rate,
         seed=training_args.seed,
-        eval_accumulation_steps=training_args.eval_accumulation_steps,
         data_seed=training_args.seed,
+        eval_accumulation_steps=training_args.eval_accumulation_steps,
         optim=training_args.optimizer,
         lr_scheduler_type=training_args.lr_scheduler_type,
         warmup_ratio=training_args.warmup_ratio,
@@ -208,9 +220,9 @@ def main():
         ],
     )
 
-    # See initial evaluation results
-    eval_result = trainer.evaluate(eval_dataset=test_dataset['train'])
-    print(f'Initial evaluation results:\n{eval_result}')
+    # # See initial evaluation results
+    # eval_result = trainer.evaluate(eval_dataset=test_dataset['train'])
+    # print(f'Initial evaluation results:\n{eval_result}')
 
     # Training
     trainer.train(

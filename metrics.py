@@ -58,11 +58,11 @@ def compute_metrics(
     # set of groups.
     for group_name in groups.keys():
         group_mask = torch.not_equal(groups[group_name], -1.0) & (groups[group_name] >= 0.5)
-        # group_mask = ~torch.isnan(groups[group_name]) & (groups[group_name] >= 0.5)  # This determines which samples belong to the group
         tmp_metrics_dict[group_name] = compute_metrics_from_pred(
             input_r=input_r,
             mean=means,
             stddev=stddevs,
+            pred_values=pred_values,
             pred_labels=pred_labels,
             target_labels=target_labels,
             target=target,
@@ -87,6 +87,7 @@ def compute_metrics(
             input_r=input_r,
             mean=means,
             stddev=stddevs,
+            pred_values=pred_values,
             pred_labels=pred_labels,
             target_labels=target_labels,
             target=target,
@@ -101,6 +102,7 @@ def compute_metrics_from_pred(
         input_r: torch.Tensor = None,
         mean: torch.Tensor = None,
         stddev: torch.Tensor = None,
+        pred_values: torch.Tensor = None,
         pred_labels: torch.Tensor = None,
         target_labels: torch.Tensor = None,
         target: torch.Tensor = None,
@@ -173,12 +175,12 @@ def compute_metrics_from_pred(
         # BPSN (Background Positive, Subgroup Negative) AUC -
         # Restrict the test set to non-abusive examples that mention the identity and abusive examples that do not.
         bpsn_mask = (target_labels & ~group_mask) | (~target_labels & group_mask)
-        bpsn_auc = roc_auc_score(target_labels[bpsn_mask].cpu().numpy(), pred_labels[bpsn_mask].cpu().numpy())
+        bpsn_auc = roc_auc_score(target_labels[bpsn_mask].cpu().numpy(), pred_values[bpsn_mask].cpu().numpy())
 
         # BNSP (Background Negative, Subgroup Positive) AUC -
         # Restrict the test set to abusive examples that mention the identity and non-abusive examples that do not.
         bnsp_mask = (target_labels & group_mask) | (~target_labels & ~group_mask)
-        bnsp_auc = roc_auc_score(target_labels[bnsp_mask].cpu().numpy(), pred_labels[bnsp_mask].cpu().numpy())
+        bnsp_auc = roc_auc_score(target_labels[bnsp_mask].cpu().numpy(), pred_values[bnsp_mask].cpu().numpy())
 
         metrics['BPSN_AUC'] = bpsn_auc
         metrics['BNSP_AUC'] = bnsp_auc

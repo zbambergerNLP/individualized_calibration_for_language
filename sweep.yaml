@@ -1,16 +1,25 @@
 program: main.py
-method: bayes
+project: "individual_calibration_for_language"
+method: grid
 metric:
   name: eval_loss
   goal: minimize
+
 parameters:
 
-  coefficient:
-    min: 0.0
-    max: 1.0
-    type: double
-
   learning_rate:
-    min: 0.0001
-    max: 0.1
-    type: double
+    values: [ 1e-4, 1e-3, 1e-2 ]
+
+  coefficient:
+    values: [ 0.3, 0.6, 1.0 ]
+
+command:
+  - srun
+  - --partition=nlp
+  - --account=nlp
+  - --gres=gpu:4
+  - --cpus-per-task=20
+  - accelerate
+  - launch
+  - ${program}
+  - ${args}

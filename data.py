@@ -10,7 +10,12 @@ import data_preprocessing
 class CommentRegressorDataCollator(transformers.DefaultDataCollator):
     """Data collator for comment regression tasks."""
 
-    def __init__(self, tokenizer, max_length=None):
+    def __init__(
+            self,
+            tokenizer,
+            seed: int = 42,
+            max_length=None,
+    ):
         """Initialize the data collator.
 
         Args:
