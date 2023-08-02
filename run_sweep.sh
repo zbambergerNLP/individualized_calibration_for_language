@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name=individualized_calibration_for_language
-#SBATCH --account=nlp68452095
+#SBATCH --account=nlp
 #SBATCH --partition=nlp
 
 #SBATCH -N 1                         # number of minimum nodes

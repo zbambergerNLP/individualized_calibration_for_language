@@ -3,6 +3,7 @@ import logging
 import numpy as np
 from accelerate import Accelerator
 import wandb
+import plots
 
 import flags
 import os
@@ -146,6 +147,7 @@ def main():
             "sample_validation_examples": data_args.sample_validation_examples,
             "sample_test_examples": data_args.sample_test_examples,
         }
+        logger.info('Initializing wandb...')
         accelerator.init_trackers(
             project_name="individual_calibration_for_language",
             config=wandb_config,
@@ -163,6 +165,7 @@ def main():
         # )
 
     # Load pretrained model
+    logger.info('Creating CommentRegressor model...')
     experiment_model = comment_regressor.CommentRegressor(
         mlp_hidden=model_args.mlp_hidden,
         drop_prob=model_args.mlp_dropout,
@@ -202,11 +205,15 @@ def main():
         deepspeed=training_args.deepspeed,
     )
 
+    # Define data collator
+    logger.info('Creating data collator...')
     data_collator = data.CommentRegressorDataCollator(
         tokenizer=tokenizer_function,
         max_length=data_args.max_seq_length,
     )
 
+    # Define trainer
+    logger.info('Creating trainer...')
     trainer = RandomizedIndividualCalibrationTrainer(
         model=experiment_model,
         args=training_arguments,
@@ -225,6 +232,7 @@ def main():
     # print(f'Initial evaluation results:\n{eval_result}')
 
     # Training
+    logger.info('Starting training...')
     trainer.train(
         resume_from_checkpoint=(
             training_args.local_checkpoint_path if (
@@ -233,13 +241,30 @@ def main():
             ) else None
         )
     )
-    print('Finished training!')
+    logger.info('Finished training!')
 
     # Evaluation
-    eval_result = trainer.evaluate(eval_dataset=validation_dataset['train'])
-    print(f'Validation results:\n{eval_result}')
-    test_result = trainer.evaluate(eval_dataset=test_dataset['train'])
-    print(f'Test results:\n{test_result}')
+    logger.info('Starting evaluation on the validation set...')
+    validation_metrics = trainer.evaluate(eval_dataset=validation_dataset['train'])
+    logger.info(f'Validation results:\n{validation_metrics}')
+    logger.info('Starting evaluation on the test set...')
+    test_metrics = trainer.evaluate(eval_dataset=test_dataset['train'])
+    logger.info(f'Test results:\n{test_metrics}')
+    logger.info('Finished evaluation!')
+
+    # Plot results
+    # logger.info('Plotting results...')
+    # plots.end_of_training_plots(
+    #     eval_result=test_metrics,
+    #     alpha=training_args.coefficient,
+    #     wandb_run=accelerator.get_tracker("wandb"),
+    # )
+    # logger.info('Finished plotting!')
+
+    # Save the model
+    logger.info('Saving model...')
+    experiment_model.save_pretrained(training_args.output_dir)
+    logger.info(f'Finished saving model to {training_args.output_dir}!')
 
 
 if __name__ == "__main__":

@@ -8,17 +8,12 @@ metric:
 parameters:
 
   learning_rate:
-    values: [ 1e-4, 1e-3, 1e-2 ]
+    value: 1e-4
 
   coefficient:
-    values: [ 0.3, 0.6, 1.0 ]
+    values: [ 0.0, 0.06, 0.2, 0.4, 0.6, 0.8, 1.0 ]
 
 command:
-  - srun
-  - --partition=nlp
-  - --account=nlp
-  - --gres=gpu:4
-  - --cpus-per-task=20
   - accelerate
   - launch
   - ${program}
