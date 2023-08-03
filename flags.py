@@ -24,7 +24,7 @@ class TrainingArguments:
         metadata={"help": "The ID of the last run. Used to resume training."},
     )
     per_device_train_batch_size: int = field(
-        default=16, metadata={"help": "Batch size per device during training."}
+        default=8, metadata={"help": "Batch size per device during training."}
     )
     per_device_eval_batch_size: int = field(
         default=64, metadata={"help": "Batch size per device for evaluation."}
@@ -47,6 +47,9 @@ class TrainingArguments:
     logging_steps: int = field(default=50, metadata={"help": "Log every X updates steps."})
     eval_accumulation_steps: int = field(
         default=4, metadata={"help": "Number of eval steps to accumulate before performing backward pass."}
+    )
+    training_accumulation_steps: int = field(
+        default=1, metadata={"help": "Number of training steps to accumulate before performing backward pass."}
     )
     save_steps: int = field(default=10_000, metadata={"help": "Save checkpoint every X updates steps."})
     # TODO: Switch eval_steps back to 1_000 after debugging.
