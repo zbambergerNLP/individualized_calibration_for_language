@@ -119,7 +119,7 @@ def main():
         mlp_hidden=model_args.mlp_hidden,
         drop_prob=model_args.mlp_dropout,
         text_encoder_model_name=model_args.model_name_or_path,
-        dtype=torch.float16  # Use float16 for faster training. TODO: Make this a flag.
+        # dtype=torch.float16  # Use float16 for faster training. TODO: Make this a flag.
     )
 
     optimizer = torch.optim.Adam(

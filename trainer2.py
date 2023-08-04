@@ -7,7 +7,7 @@ import torch
 import typing
 
 import transformers
-
+import evaluate
 import data
 
 
@@ -39,15 +39,31 @@ class CommentRegressorTrainer:
 
         Args:
             model: The model to train.
-            coefficient: The coefficient to use.
+            tokenizer: The tokenizer to use.
+            train_dataset: The training dataset.
+            validation_dataset: The validation dataset.
+            test_dataset: The test dataset.
+            train_batch_size: The training batch size.
+            validation_batch_size: The validation batch size.
+            test_batch_size: The test batch size.
+            training_accumulation_steps: The number of steps to accumulate gradients for during training.
+            validation_accumulation_steps: The number of steps to accumulate gradients for during validation.
+            coefficient: The coefficient to use for the loss function. Larger values will increase the importance
+                of sharpness/accuracy while smaller values will increase the importance of fairness. Bounded between
+                0 and 1.
             optimizer: The optimizer to use.
             scheduler: The scheduler to use.
-            group_names: The names of the hidden groups (columns) in the dataset.
+            group_names: The names of the protected groups.
             accelerator: The accelerator to use.
+            seed: The seed to use.
+            logging_steps: The number of steps to take before logging.
+            eval_steps: The number of steps to take before evaluating.
+            save_steps: The number of steps to take before saving.
         """
         if accelerator is None:
             accelerator = accelerate.Accelerator(
                 gradient_accumulation_steps=training_accumulation_steps,
+                log_with='wandb',
 
             )
         self.accelerator = accelerator
@@ -95,7 +111,18 @@ class CommentRegressorTrainer:
             validation_batch_size: int,
             test_batch_size: int,
     ):
-        """Set up the dataloaders."""
+        """Set up the dataloaders.
+
+        Save the dataloaders as attributes of the Trainer.
+
+        Args:
+            train_dataset: The training dataset.
+            validation_dataset: The validation dataset.
+            test_dataset: The test dataset.
+            train_batch_size: The training batch size.
+            validation_batch_size: The validation batch size.
+            test_batch_size: The test batch size.
+        """
         collator_fn = data.CommentRegressorDataCollator(
             tokenizer=self.tokenizer,
             seed=self.seed,
@@ -122,71 +149,99 @@ class CommentRegressorTrainer:
     ):
         """Train the model.
 
-        Note:
-            * Each batch in the dataset consists of the following keys:
-                - input_ids: The input IDs.
-                - attention_mask: The attention mask.
-                - labels: The labels. In the case of CivilCommentsIdentities, this is a toxicity score between 0 and 1.
-                - input_r: A random number between 0 and 1.
-                - <group_name>: The hidden group (column) values. These are also between 0 and 1.
-            * The model predicts outputs that consist of:
-                - mean: The mean of the predictions.
-                - std: The standard deviation of the predictions.
-
         Args:
-            train_dataset: The training dataset.
-            validation_dataset: The validation dataset.
             epochs: The number of epochs to train for.
-            train_batch_size: The batch size for training.
-            validation_batch_size: The batch size for validation.
-            training_accumulation_steps: The number of steps to accumulate gradients for during training.
-            validation_accumulation_steps: The number of steps to accumulate gradients for during validation.
         """
         self.accelerator.print(
             f"Training on {self.accelerator.device} using {self.accelerator.distributed_type} "
             f"with {self.accelerator.num_processes} processes."
         )
+        self.accelerator.init_trackers(
+            project_name='individualized_calibration_for_language',
+            config={
+                'epochs': epochs,
+                'train_batch_size': self.train_loader.batch_size,
+                'validation_batch_size': self.validation_loader.batch_size,
+                'test_batch_size': self.test_loader.batch_size,
+                'training_accumulation_steps': self.training_accumulation_steps,
+                'validation_accumulation_steps': self.validation_accumulation_steps,
+                'coefficient': self.coefficient,
+                'seed': self.seed,
+                'logging_steps': self.logging_steps,
+                'eval_steps': self.eval_steps,
+                'save_steps': self.save_steps,
+                'groups': self.group_names,
+            },
+        )
         for epoch in tqdm.trange(
                 epochs,
+                desc="Epoch",
+                total=epochs,
+                disable=not self.accelerator.is_local_main_process,
+                position=0,
         ):
             self.model.train()
 
-            for step, batch in tqdm.tqdm(enumerate(self.train_loader)):
-                # Assign the batch to the device.
-                batch = {key: value for key, value in batch.items()}
-                model_inputs = {
-                    "input_ids": batch["input_ids"],
-                    "attention_mask": batch["attention_mask"],
-                    "input_r": batch["input_r"],
-                }
-                model_outputs = self.model(**model_inputs)
-                mean_pred, output_pred = model_outputs
-                loss = self.compute_loss(
-                    input_r=batch["input_r"],
-                    mean_pred=mean_pred,
-                    std_pred=output_pred,
-                    labels=batch["labels"],
-                )
-                self.accelerator.backward(loss)
-
-                if step % self.training_accumulation_steps:
+            for step, batch in tqdm.tqdm(
+                    enumerate(self.train_loader),
+                    desc="Training",
+                    total=len(self.train_loader),
+                    disable=not self.accelerator.is_local_main_process,
+                    position=1,
+            ):
+                with self.accelerator.accumulate(self.model):
+                    batch = {key: value for key, value in batch.items()}
+                    model_inputs = {
+                        "input_ids": batch["input_ids"],
+                        "attention_mask": batch["attention_mask"],
+                        "input_r": batch["input_r"],
+                    }
+                    model_outputs = self.model(**model_inputs)
+                    mean_pred, output_pred = model_outputs
+                    loss = self.compute_loss(
+                        input_r=batch["input_r"],
+                        mean_pred=mean_pred,
+                        std_pred=output_pred,
+                        labels=batch["labels"],
+                    )
+                    self.accelerator.backward(loss)
                     self.optimizer.step()
-                    self.optimizer.zero_grad()
                     self.scheduler.step()
-                if step % self.eval_steps == 0:
-                    self.eval(self.validation_loader, self.validation_accumulation_steps)
-                if step % self.save_steps == 0:
-                    self.accelerator.save(self.model.state_dict(), f"model_{step}.pt")
+                    self.optimizer.zero_grad()
+                    if step % self.logging_steps == 0:
+                        self.accelerator.print(
+                            f"Epoch: {epoch} | Step: {step} | Loss: {loss.item():.3f}"
+                        )
+                        self.accelerator.log({"training_loss": loss.item()})
+                    if step % self.eval_steps == 0:
+                        self.eval(self.validation_loader, self.validation_accumulation_steps)
+                    if step % self.save_steps == 0:
+                        self.accelerator.save(self.model.state_dict(), f"model_{step}.pt")
+                        self.accelerator.save_state(f"checkpoint_{step}")
+        self.accelerator.end_training()
 
     def eval(
             self,
             validation_loader: torch.utils.data.DataLoader,
             validation_accumulation_steps: int,
     ):
+        """
+        Evaluate the model on the validation set.
+
+        Args:
+            validation_loader: The validation dataloader.
+            validation_accumulation_steps: The number of steps to accumulate gradients over.
+        """
         self.model.eval()
         losses = []
         batch_count = 0
-        for step, batch in tqdm.tqdm(enumerate(validation_loader), desc="Validation Batch"):
+        for step, batch in tqdm.tqdm(
+                enumerate(validation_loader),
+                desc="Validation Batch",
+                total=len(validation_loader),
+                disable=not self.accelerator.is_local_main_process,
+                position=2,
+        ):
             model_inputs = {
                 "input_ids": batch["input_ids"],
                 "attention_mask": batch["attention_mask"],
@@ -203,10 +258,13 @@ class CommentRegressorTrainer:
             )
             losses.append(loss)
             batch_count += 1
-            if len(losses) == validation_accumulation_steps:
+            if len(losses) % validation_accumulation_steps:
                 loss = torch.mean(torch.stack(losses))
-                # self.accelerator.log({"eval_loss": loss.item()})
-                break
+                losses.append(loss)
+
+        loss = torch.mean(torch.stack(losses))
+        self.accelerator.print(f"Validation Loss: {loss.item():.3f}")
+        self.accelerator.log({"validation_loss": loss.item()})
         self.model.train()
 
     def compute_loss(
@@ -225,7 +283,7 @@ class CommentRegressorTrainer:
             labels: The labels.
 
         Returns:
-            The loss.
+            The loss scalar.
         """
         cdf = 0.5 * (1.0 + torch.erf((labels - mean_pred) / std_pred / torch.sqrt(torch.tensor(2))))
         loss_cdf = torch.abs(cdf - input_r).mean()
@@ -238,5 +296,3 @@ class CommentRegressorTrainer:
         # Total loss is a function of both the cdf loss (fairness) and the nll loss (sharpness/accuracy).
         loss = (1 - self.coefficient) * loss_cdf + self.coefficient * loss_nll
         return loss
-
-
