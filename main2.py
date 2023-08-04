@@ -21,6 +21,7 @@ import transformers
 import data
 from trainer import RandomizedIndividualCalibrationTrainer
 from transformers import TrainingArguments, AutoTokenizer
+from plots import end_of_training_plots
 
 deepspeed_plugin = (
 
@@ -33,6 +34,9 @@ deepspeed_plugin = (
 
 
 def main():
+
+    print("cuda is available: ", torch.cuda.is_available())
+
     # Parse arguments
     parser = transformers.HfArgumentParser(
         (flags.ModelArguments, flags.DataArguments, flags.TrainingArguments)
@@ -150,6 +154,11 @@ def main():
         epochs=training_args.num_train_epochs,
     )
 
+    # Evaluate the model on the test set
+    test_metrics = trainer.eval_iter(model=trainer.model,
+                                     validation_loader=trainer.test_loader)
+    end_of_training_plots(eval_result=test_metrics,
+                          alpha=training_args.coefficient)
 
 if __name__ == '__main__':
     main()
