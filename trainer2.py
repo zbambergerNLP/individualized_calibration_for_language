@@ -1,5 +1,4 @@
 import math
-import numpy as np
 
 import accelerate
 import datasets
@@ -8,20 +7,12 @@ import torch
 import typing
 
 import transformers
-<<<<<<< HEAD
-#import evaluate
-=======
 import evaluate
 import wandb
 from typing import List, Dict, Tuple, Optional, Union, Any
 
 import data
->>>>>>> d0328d0bd83b5da8a558487ba84171ec3a5f9b21
 
-import data
-from model import CommentRegressorPrediction
-from data_preprocessing import GROUP_LIST
-from metrics import compute_metrics
 
 class CommentRegressorTrainer:
 
@@ -239,8 +230,7 @@ class CommentRegressorTrainer:
                             step=step,
                         )
                     if step % self.eval_steps == 0:
-                        _ = self.eval(self.model, self.validation_loader, self.validation_accumulation_steps)
-                        self.model.train()
+                        self.eval(self.validation_loader, self.validation_accumulation_steps)
                     if step % self.save_steps == 0:
                         experiment_name = (
                             f'seed_{self.seed}_'
@@ -253,7 +243,6 @@ class CommentRegressorTrainer:
 
     def eval(
             self,
-            model,
             validation_loader: torch.utils.data.DataLoader,
             validation_accumulation_steps: int,
     ):
@@ -261,18 +250,9 @@ class CommentRegressorTrainer:
         Evaluate the model on the validation set.
 
         Args:
-            model: The model to evaluate.
             validation_loader: The validation dataloader.
             validation_accumulation_steps: The number of steps to accumulate gradients over.
         """
-<<<<<<< HEAD
-        model.eval()
-        groups_dict = {}
-        for group_name in GROUP_LIST:
-            groups_dict[group_name] = []
-        losses, mean_list, stddev_list, input_r_list, targets_list = [], [], [], [], []
-        batch_count = 0
-=======
         self.model.eval()
 
         all_losses = []                                                   # type: List[torch.Tensor]
@@ -289,7 +269,6 @@ class CommentRegressorTrainer:
         labels = []                                                   # type: List[torch.Tensor]
         input_rs = []                                                 # type: List[torch.Tensor]
 
->>>>>>> d0328d0bd83b5da8a558487ba84171ec3a5f9b21
         for step, batch in tqdm.tqdm(
                 enumerate(validation_loader),
                 desc="Validation step",
@@ -303,13 +282,12 @@ class CommentRegressorTrainer:
                 "input_r": batch["input_r"],
             }
             with torch.no_grad():
-                model_outputs = model(**model_inputs)
-            mean_pred, stddev_pred = model_outputs
-
+                model_outputs = self.model(**model_inputs)
+            mean_pred, output_pred = model_outputs
             loss = self.compute_loss(
                 input_r=batch["input_r"],
                 mean_pred=mean_pred,
-                std_pred=stddev_pred,
+                std_pred=output_pred,
                 labels=batch["labels"],
             )
 
@@ -329,44 +307,10 @@ class CommentRegressorTrainer:
                 all_losses.append(loss)
                 losses = []
 
-<<<<<<< HEAD
-            # Save the predictions and labels.
-            mean_list.append(mean_pred)
-            stddev_list.append(stddev_pred)
-            targets_list.append(batch["labels"])
-            input_r_list.append(batch["input_r"])
-            groups_curr = batch["groups"].to(self.device)
-            for group_name in GROUP_LIST:
-                groups_dict[group_name].append(groups_curr[group_name].to(self.device))
-
-        loss = torch.mean(torch.stack(losses))
-        self.accelerator.print(f"Validation Loss: {loss.item():.3f}")
-        self.accelerator.log({"validation_loss": loss.item()})
-
-        # Accumulate the predictions, labels, groups and input_r.
-        mean_list = np.array(mean_list)
-        stddev_list = np.array(stddev_list)
-        input_r_list = np.array(input_r_list)
-        targets_list = np.array(targets_list)
-        for group_name in GROUP_LIST:
-            groups_dict[group_name] = np.array(groups_dict[group_name])
-
-        comment_reg_pred = CommentRegressorPrediction(means=mean_list,
-                                                      stddevs=stddev_list,
-                                                      input_r=input_r_list,
-                                                      label_ids=targets_list,
-                                                      groups=groups_dict)
-
-        # Creates the metrics
-        metric_eval = compute_metrics(eval_pred=comment_reg_pred)
-        # Todo: we need to add the metrics to the log \ wandb
-        return metric_eval
-=======
         loss = torch.mean(torch.stack(all_losses))
         self.accelerator.print(f"Validation Loss: {loss.item():.3f}")
         self.accelerator.log({"validation_loss": loss.item()}, step=self.training_step-1)
         self.model.train()
->>>>>>> d0328d0bd83b5da8a558487ba84171ec3a5f9b21
 
     def compute_loss(
             self,
