@@ -8,7 +8,15 @@ import torch
 import typing
 
 import transformers
+<<<<<<< HEAD
 #import evaluate
+=======
+import evaluate
+import wandb
+from typing import List, Dict, Tuple, Optional, Union, Any
+
+import data
+>>>>>>> d0328d0bd83b5da8a558487ba84171ec3a5f9b21
 
 import data
 from model import CommentRegressorPrediction
@@ -23,16 +31,16 @@ class CommentRegressorTrainer:
             tokenizer: transformers.PreTrainedTokenizer,
             train_dataset: datasets.Dataset,
             validation_dataset: datasets.Dataset,
-            test_dataset: datasets.Dataset,
             train_batch_size: int,
             validation_batch_size: int,
-            test_batch_size: int,
             training_accumulation_steps: int,
             validation_accumulation_steps: int,
             coefficient: float,
             optimizer: torch.optim.Optimizer,
             scheduler: torch.optim.lr_scheduler.LinearLR,
-            group_names: typing.List[str] = None,
+            test_dataset: datasets.Dataset = None,
+            test_batch_size: int = None,
+            group_names: List[str] = None,
             accelerator: accelerate.Accelerator = None,
             seed: int = 42,
             logging_steps: int = 50,
@@ -71,17 +79,18 @@ class CommentRegressorTrainer:
 
             )
         self.accelerator = accelerator
+        self.initial_learning_rate = optimizer.defaults.get('lr')
 
         self.tokenizer = tokenizer
         self.seed = seed
 
-        self.set_up_dataloaders(
-            train_dataset,
-            validation_dataset,
-            test_dataset,
-            train_batch_size,
-            validation_batch_size,
-            test_batch_size,
+        self._set_up_dataloaders(
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            test_dataset=test_dataset,
+            train_batch_size=train_batch_size,
+            validation_batch_size=validation_batch_size,
+            test_batch_size=test_batch_size,
         )
         (
             self.model,
@@ -105,15 +114,16 @@ class CommentRegressorTrainer:
         self.save_steps = save_steps
         self.training_accumulation_steps = training_accumulation_steps
         self.validation_accumulation_steps = validation_accumulation_steps
+        self.training_step = 0
 
-    def set_up_dataloaders(
+    def _set_up_dataloaders(
             self,
             train_dataset: datasets.Dataset,
             validation_dataset: datasets.Dataset,
-            test_dataset: datasets.Dataset,
             train_batch_size: int,
             validation_batch_size: int,
-            test_batch_size: int,
+            test_dataset: datasets.Dataset = None,
+            test_batch_size: int = None,
     ):
         """Set up the dataloaders.
 
@@ -141,11 +151,12 @@ class CommentRegressorTrainer:
             batch_size=validation_batch_size,
             collate_fn=collator_fn,
         )
-        self.test_loader = torch.utils.data.DataLoader(
-            test_dataset,
-            batch_size=test_batch_size,
-            collate_fn=collator_fn,
-        )
+        if test_dataset is not None and test_batch_size is not None:
+            self.test_loader = torch.utils.data.DataLoader(
+                test_dataset,
+                batch_size=test_batch_size,
+                collate_fn=collator_fn,
+            )
 
     def train(
             self,
@@ -177,6 +188,7 @@ class CommentRegressorTrainer:
                 'groups': self.group_names,
             },
         )
+
         for epoch in tqdm.trange(
                 epochs,
                 desc="Epoch",
@@ -193,6 +205,7 @@ class CommentRegressorTrainer:
                     disable=not self.accelerator.is_local_main_process,
                     position=1,
             ):
+                self.training_step += 1
                 with self.accelerator.accumulate(self.model):
                     batch = {key: value for key, value in batch.items()}
                     model_inputs = {
@@ -216,13 +229,26 @@ class CommentRegressorTrainer:
                         self.accelerator.print(
                             f"Epoch: {epoch} | Step: {step} | Loss: {loss.item():.3f}"
                         )
-                        self.accelerator.log({"training_loss": loss.item()})
+                        learning_rate = self.optimizer.param_groups[0]["lr"]
+                        self.accelerator.log(
+                            {
+                                "training_step": step,
+                                "training_loss": loss.item(),
+                                "learning_rate": learning_rate,
+                            },
+                            step=step,
+                        )
                     if step % self.eval_steps == 0:
                         _ = self.eval(self.model, self.validation_loader, self.validation_accumulation_steps)
                         self.model.train()
                     if step % self.save_steps == 0:
-                        self.accelerator.save(self.model.state_dict(), f"model_{step}.pt")
-                        self.accelerator.save_state(f"checkpoint_{step}")
+                        experiment_name = (
+                            f'seed_{self.seed}_'
+                            f'coefficient_{str(self.coefficient).replace(".", "_")}_'
+                            f'lr_{str(self.initial_learning_rate).replace(".", "_")}_'
+                            f'step_{self.training_step-1}')
+                        self.accelerator.print(f"Saving model to `checkpoints/{experiment_name}`")
+                        self.accelerator.save_state(f"checkpoints/{experiment_name}")
         self.accelerator.end_training()
 
     def eval(
@@ -239,15 +265,34 @@ class CommentRegressorTrainer:
             validation_loader: The validation dataloader.
             validation_accumulation_steps: The number of steps to accumulate gradients over.
         """
+<<<<<<< HEAD
         model.eval()
         groups_dict = {}
         for group_name in GROUP_LIST:
             groups_dict[group_name] = []
         losses, mean_list, stddev_list, input_r_list, targets_list = [], [], [], [], []
         batch_count = 0
+=======
+        self.model.eval()
+
+        all_losses = []                                                   # type: List[torch.Tensor]
+        all_groups = {group_name: [] for group_name in self.group_names}  # type: Dict[str, List[torch.Tensor]]
+        all_means = []                                                    # type: List[torch.Tensor]
+        all_stddevs = []                                                  # type: List[torch.Tensor]
+        all_labels = []                                                   # type: List[torch.Tensor]
+        all_input_rs = []                                                 # type: List[torch.Tensor]
+
+        losses = []                                                   # type: List[torch.Tensor]
+        groups = {group_name: [] for group_name in self.group_names}  # type: Dict[str, List[torch.Tensor]]
+        means = []                                                    # type: List[torch.Tensor]
+        stddevs = []                                                  # type: List[torch.Tensor]
+        labels = []                                                   # type: List[torch.Tensor]
+        input_rs = []                                                 # type: List[torch.Tensor]
+
+>>>>>>> d0328d0bd83b5da8a558487ba84171ec3a5f9b21
         for step, batch in tqdm.tqdm(
                 enumerate(validation_loader),
-                desc="Validation Batch",
+                desc="Validation step",
                 total=len(validation_loader),
                 disable=not self.accelerator.is_local_main_process,
                 position=2,
@@ -267,12 +312,24 @@ class CommentRegressorTrainer:
                 std_pred=stddev_pred,
                 labels=batch["labels"],
             )
+
+            # Accumulate losses, groups, predictions, labels, and input_rs
             losses.append(loss)
-            batch_count += 1
+            for group_name in self.group_names:
+                groups[group_name].append(batch[group_name])
+            means.append(mean_pred)
+            stddevs.append(output_pred)
+            labels.append(batch["labels"])
+            input_rs.append(batch["input_r"])
+
+            # If we have accumulated enough, then append to all_losses, all_groups, all_predictions, all_labels,
+            # and all_input_rs
             if len(losses) % validation_accumulation_steps:
                 loss = torch.mean(torch.stack(losses))
-                losses.append(loss)
+                all_losses.append(loss)
+                losses = []
 
+<<<<<<< HEAD
             # Save the predictions and labels.
             mean_list.append(mean_pred)
             stddev_list.append(stddev_pred)
@@ -304,6 +361,12 @@ class CommentRegressorTrainer:
         metric_eval = compute_metrics(eval_pred=comment_reg_pred)
         # Todo: we need to add the metrics to the log \ wandb
         return metric_eval
+=======
+        loss = torch.mean(torch.stack(all_losses))
+        self.accelerator.print(f"Validation Loss: {loss.item():.3f}")
+        self.accelerator.log({"validation_loss": loss.item()}, step=self.training_step-1)
+        self.model.train()
+>>>>>>> d0328d0bd83b5da8a558487ba84171ec3a5f9b21
 
     def compute_loss(
             self,
