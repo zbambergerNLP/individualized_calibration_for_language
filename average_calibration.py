@@ -2,6 +2,7 @@ import typing
 
 import numpy as np
 import math
+import tqdm
 
 import torch
 from torch import nn
@@ -16,10 +17,10 @@ from torch.utils.data import TensorDataset, DataLoader
 
 
 # Preform calibration on a CommentRegressor
-def calibration(comment_regressor: CommentRegressor,
-                calibration_dataset: datasets.Dataset,
-                batch_size: int = 16,
-                ) -> CalibratedCommentRegressor:
+def perform_average_calibration(comment_regressor: CommentRegressor,
+                                calibration_dataset: datasets.Dataset,
+                                batch_size: int = 16,
+                                ) -> CalibratedCommentRegressor:
 
     print("Start calibration")
 
@@ -84,12 +85,17 @@ def train_calibration_layer(comment_regressor, dataloader_for_calibration):
     calibrated_comment_regressor.calibration_layer.train()
 
     # Optimizer
-    optimizer = torch.optim.SGD(calibrated_comment_regressor.calibration_layer.parameters(), lr=0.001)
+    optimizer = torch.optim.SGD(calibrated_comment_regressor.calibration_layer.parameters(), lr=0.01)
 
     # Loss function
     loss_function = nn.MSELoss()
 
-    for step, batch in enumerate(dataloader_for_calibration):
+    for step, batch in tqdm.tqdm(
+            enumerate(dataloader_for_calibration),
+            desc="Calibrate",
+            total=len(dataloader_for_calibration),
+            position=1,
+    ):
         mean_list, stddev_list, cdf_list, target = batch
         optimizer.zero_grad()
         cali_mean, calib_std = calibrated_comment_regressor.calibration_layer(mean_list, stddev_list)
@@ -99,6 +105,6 @@ def train_calibration_layer(comment_regressor, dataloader_for_calibration):
         optimizer.step()
 
         if step % int(len(dataloader_for_calibration)/10) == 0:
-            print(f"Step: {step}, Calibration MSE loss: {loss}")
+            print("Step: {}, Calibration MSE loss: {:.4f}".format(step, loss.item()))
 
     return calibrated_comment_regressor

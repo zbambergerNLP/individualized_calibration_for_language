@@ -1,12 +1,87 @@
 import math
+import os
 
 import torch
 import model as individualized_calibration_model
 from sklearn.metrics import confusion_matrix, roc_auc_score
 
+import matplotlib.pyplot as plt
+import pickle
+
+
+class MetricManager:
+    """Saves and plots the metrics of this run.
+        Also open a dir to save the metrics and the plots.
+
+        Args:
+            coefficient: The coefficient of the loss.
+        """
+    def __init__(self, coefficient):
+        self.coefficient = coefficient
+        self.metrics = {}
+        self.metrics_names = ['loss', 'loss_cdf', 'loss_stddev', 'loss_nll', 'Recall', 'FPR', 'Precision', 'F1',
+                              'Accuracy', 'BPSN_AUC', 'BNSP_AUC']
+
+
+        # Opens a dir to save the metrics and the plots, with the name "exp{}_coef_<>"
+        self.metric_dir_path = "./metrics"
+        os.makedirs(self.metric_dir_path, exist_ok=True)
+        dirs = [d for d in os.listdir(self.metric_dir_path) if os.path.isdir(os.path.join(self.metric_dir_path, d))]
+
+        # Check if the directory is empty
+        if not dirs:
+            # If it is empty, create a new directory with the name "exp1_coef_{coefficient}"
+            self.new_dir_name = os.path.join(self.metric_dir_path, "exp1_coef_{}".format(self.coefficient))
+            os.mkdir(self.new_dir_name)
+        else:
+            # If it is not empty, find the directory with the largest "exp" number
+            exp_numbers = [int(d.split('exp')[1].split('_')[0]) for d in dirs if 'exp' in d]
+            max_exp_number = max(exp_numbers) if exp_numbers else 0
+
+            # Create a new directory with the name "exp{max_exp_number + 1}_coef_{coefficient}"
+            self.new_dir_name = os.path.join(self.metric_dir_path,
+                                             "exp{}_coef_{}".format(max_exp_number + 1, self.coefficient))
+            os.mkdir(self.new_dir_name)
+
+    def add_dict_metrics(self, step, metrics_dict):
+        for metric_name, metric_value in metrics_dict.items():
+            self.add_metric(step, metric_name, metric_value)
+
+    def add_metric(self, step, metric_name, metric_value):
+        if metric_name not in self.metrics.keys():
+            self.metrics[metric_name] = {}
+            self.metrics[metric_name]['steps'] = []
+            self.metrics[metric_name]['values'] = []
+        self.metrics[metric_name]['steps'].append(step)
+        self.metrics[metric_name]['values'].append(metric_value)
+
+
+    def create_all_metrics_plots(self):
+        # Create a new figure for each metric and save it in the directory
+        for metric_name in self.metrics_names:
+            plt.figure(figsize=(12, 6))
+            for key, metric_dict in self.metrics.items():
+                # Check if the key ends with the current metric
+                if key.endswith(metric_name):
+                    # If it does, plot the values with the key as the label
+                    plt.plot(metric_dict['steps'], metric_dict['values'], label=key)
+
+            # Add a legend, title and save the figure
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.title("{} (alpha = {})".format(metric_name, self.coefficient))
+            plt.tight_layout()  # Adjust the spacing around the plot
+            plt.savefig(self.new_dir_name + "/" + metric_name + '.png')
+            plt.close()
+
+    def save_metrics(self):
+        # Save the metrics in a file in the directory
+        with open(os.path.join(self.new_dir_name, 'metrics.pkl'), 'wb') as fp:
+            pickle.dump(self.metrics, fp)
+
 
 def compute_metrics(
         eval_pred: individualized_calibration_model.CommentRegressorPrediction,
+        coefficient: float,
         eval_with_sample: bool = False,
 ) -> dict[str, float]:
     """Compute metrics for the evaluation predictions (e.g., TPR, FPR, AUC, precision, recall, F1).
@@ -58,6 +133,9 @@ def compute_metrics(
     # set of groups.
     for group_name in groups.keys():
         group_mask = torch.not_equal(groups[group_name], -1.0) & (groups[group_name] >= 0.5)
+        if group_mask.sum() == 0:
+            # If there are no samples in the group, skip it.
+            continue
         tmp_metrics_dict[group_name] = compute_metrics_from_pred(
             input_r=input_r,
             mean=means,
@@ -67,10 +145,11 @@ def compute_metrics(
             target_labels=target_labels,
             target=target,
             group_mask=group_mask,
+            coefficient=coefficient,
         )
 
     # Update the metrics_dict with the tmp_metrics_dict
-    for group_name in groups.keys():
+    for group_name in tmp_metrics_dict.keys():
         for metric in tmp_metrics_dict[group_name].keys():
             metrics_dict[group_name + "_" + metric] = tmp_metrics_dict[group_name][metric]
 
@@ -92,13 +171,15 @@ def compute_metrics(
             target_labels=target_labels,
             target=target,
             group_mask=torch.ones_like(target, dtype=torch.bool),
-            full_dataset=True,)
+            full_dataset=True,
+            coefficient=coefficient)
     )
 
     return metrics_dict
 
 
 def compute_metrics_from_pred(
+        coefficient: float,
         input_r: torch.Tensor = None,
         mean: torch.Tensor = None,
         stddev: torch.Tensor = None,
@@ -138,6 +219,7 @@ def compute_metrics_from_pred(
             (((target[group_mask] - mean[group_mask]) / stddev[group_mask]) ** 2 / 2.0)
     )
     loss_nll = loss_nll.mean()
+    loss = (1 - coefficient) * loss_cdf + coefficient * loss_nll
 
     # TODO: Consider reporting when denominators are 0.
 
@@ -161,6 +243,7 @@ def compute_metrics_from_pred(
 
     # Return those metrics
     metrics = {
+        'loss': loss,
         'loss_cdf': loss_cdf,
         'loss_stddev': loss_stddev,
         'loss_nll': loss_nll,

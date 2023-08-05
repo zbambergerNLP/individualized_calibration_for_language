@@ -10,6 +10,7 @@ def end_of_training_plots(
         eval_result: dict,
         alpha: float,
         wandb_run,
+        data_title: str = "",
 ):
     """
     Plots the results of the evaluation at the end of the training.
@@ -53,61 +54,65 @@ def end_of_training_plots(
 
     # Finds the worst metric between all the groups
     # 'key != metric' so we won't take the metric on the all dataset
+    # Metrics that smaller is better
     for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'FPR']:
-        eval_result[metric + '_worst_group'] = (
-            max(value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric)
-        )
-        eval_result[metric + '_best_group'] = (
-            min(value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric)
-        )
+        cuur_list = [value for key, value in eval_result.items()
+                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
+        if len(cuur_list) == 0:
+            continue
+        eval_result[metric + '_worst_group'] = max(cuur_list)
+        eval_result[metric + '_best_group'] =  min(cuur_list)
 
-    # Finds the best metric between all the groups
+    # Metrics that bigger is better
     for metric in ['Accuracy', 'F1', 'TPR', 'BPSN_AUC', 'BNSP_AUC']:
-        eval_result[metric + '_worst_group'] = (
-            min(value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric)
-        )
-        eval_result[metric + '_best_group'] = (
-            max(value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric)
-        )
+        curr_list = [value for key, value in eval_result.items()
+                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
+        if len(curr_list) == 0:
+            continue
+        eval_result[metric + '_worst_group'] = min(curr_list)
+        eval_result[metric + '_best_group'] = max(curr_list)
 
     # Finds the mean metric value between all the groups
     for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'Accuracy', 'F1', 'TPR', 'FPR', 'BPSN_AUC', 'BNSP_AUC']:
-        eval_result[metric + '_mean'] = (
-            sum(value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric) /
-            sum(1 for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric)
-        )
+        curr_list = [value for key, value in eval_result.items()
+                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
+        if len(curr_list) == 0:
+            continue
+        eval_result[metric + '_mean'] = sum(curr_list) / len(curr_list)
 
     # Loss function graphs
-    update_plot(eval_result, key_x='loss_cdf_worst_group', key_y='loss_nll', alpha=alpha, wandb_run=wandb_run)
-    update_plot(eval_result, key_x='loss_cdf_worst_group', key_y='loss_stddev', alpha=alpha, wandb_run=wandb_run)
+    update_plot(eval_result, key_x='loss_cdf_worst_group', key_y='loss_nll', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='loss_cdf_worst_group', key_y='loss_stddev', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
 
     # Classification metrics graphs (worst group)
-    update_plot(eval_result, key_x='BPSN_AUC_worst_group', key_y='F1', alpha=alpha, wandb_run=wandb_run)
-    update_plot(eval_result, key_x='BNSP_AUC_worst_group', key_y='F1', alpha=alpha, wandb_run=wandb_run)
-    update_plot(eval_result, key_x='Accuracy_worst_group', key_y='Accuracy', alpha=alpha, wandb_run=wandb_run)
-    update_plot(eval_result, key_x='F1_worst_group', key_y='F1', alpha=alpha, wandb_run=wandb_run)
-    update_plot(eval_result, key_x='TPR_worst_group', key_y='TPR', alpha=alpha, wandb_run=wandb_run)
-    update_plot(eval_result, key_x='FPR_worst_group', key_y='FPR', alpha=alpha, wandb_run=wandb_run)
+    update_plot(eval_result, key_x='BPSN_AUC_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='BNSP_AUC_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='Accuracy_worst_group', key_y='Accuracy', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='F1_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='TPR_worst_group', key_y='TPR', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='FPR_worst_group', key_y='FPR', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
 
     # Classification metrics graphs (best group)
-    update_plot(
-        eval_result, key_x='BPSN_AUC_best_group', key_y='BPSN_AUC_worst_group', alpha=alpha, wandb_run=wandb_run)
-    update_plot(
-        eval_result, key_x='BNSP_AUC_best_group', key_y='BNSP_AUC_worst_group', alpha=alpha, wandb_run=wandb_run)
-    update_plot(
-        eval_result, key_x='Accuracy_best_group', key_y='Accuracy_worst_group', alpha=alpha, wandb_run=wandb_run)
-    update_plot(
-        eval_result, key_x='F1_best_group', key_y='F1_worst_group', alpha=alpha, wandb_run=wandb_run)
-    update_plot(
-        eval_result, key_x='TPR_best_group', key_y='TPR_worst_group', alpha=alpha, wandb_run=wandb_run)
-    update_plot(
-        eval_result, key_x='FPR_best_group', key_y='FPR_worst_group', alpha=alpha, wandb_run=wandb_run)
+    update_plot(eval_result, key_x='BPSN_AUC_best_group', key_y='BPSN_AUC_worst_group', alpha=alpha, data_title=data_title,
+        wandb_run=wandb_run)
+    update_plot(eval_result, key_x='BNSP_AUC_best_group', key_y='BNSP_AUC_worst_group', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='Accuracy_best_group', key_y='Accuracy_worst_group', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='F1_best_group', key_y='F1_worst_group', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='TPR_best_group', key_y='TPR_worst_group', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='FPR_best_group', key_y='FPR_worst_group', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
 
 
 def update_plot(
@@ -115,6 +120,7 @@ def update_plot(
         key_x: str,
         key_y: str,
         alpha: float,
+        data_title: str,
         wandb_run,
 ):
     """
@@ -126,11 +132,14 @@ def update_plot(
     :param alpha: The coefficient of the loss function (balances between the performance-oriented loss and the
         fairness-oriented loss).
     """
+    if key_x not in data_dict or key_y not in data_dict:
+        return
+
     dir_path = 'visualizations/scatters/{}_{}'.format(key_x, key_y)
     os.makedirs(dir_path, exist_ok=True)
     # Load existing plot data if it exists
-    plot_data_path = dir_path + '/data.csv'
-    plot_path = dir_path + '/graph.png'
+    plot_data_path = '{}/data_{}.csv'.format(dir_path, data_title)
+    plot_path = '{}/graph_{}.png'.format(dir_path, data_title)
     if os.path.exists(plot_data_path):
         with open(plot_data_path, 'rb') as f:
             plot_data = pd.read_csv(plot_data_path)
@@ -149,7 +158,10 @@ def update_plot(
     sc = plt.scatter(plot_data[key_x], plot_data[key_y], c=plot_data['alpha'], cmap='coolwarm')
     plt.xlabel(key_x)
     plt.ylabel(key_y)
-    title = "{}, {}".format(key_x, key_y)
+    if data_title == "":
+        title = "{} vs. {}".format(key_x, key_y)
+    else:
+        title = "{} vs. {} - {}".format(key_x, key_y, data_title)
     plt.title(title)
 
     # Add a colorbar
@@ -160,4 +172,4 @@ def update_plot(
 
     # Save the updated plot data
     plot_data.to_csv(plot_data_path, index=False)
-    wandb_run.log({title: wandb.Image(plot_path)})
+    #wandb_run.log({title: wandb.Image(plot_path)})

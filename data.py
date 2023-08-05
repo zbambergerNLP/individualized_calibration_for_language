@@ -63,6 +63,7 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
 def create_datasets(
         train_file: str,
         validation_file: str,
+        calib_file: str,
         test_file: str,
         tokenizer_function: typing.Callable[
             [typing.Dict[str, typing.Any]], typing.Dict[str, typing.Any]] = None,
@@ -73,6 +74,7 @@ def create_datasets(
     Args:
         train_file: The path to the training file.
         validation_file: The path to the validation file.
+        calib_file: The path to the calibration file.
         test_file: The path to the test file.
         tokenizer_function: The function to use to tokenize the input text.
         batch_size: The batch size.
@@ -89,6 +91,10 @@ def create_datasets(
         "csv",
         data_files=validation_file,
     )
+    calibration_dataset = datasets.load_dataset(
+        "csv",
+        data_files=calib_file,
+    )
     test_dataset = datasets.load_dataset(
         "csv",
         data_files=test_file,
@@ -100,6 +106,12 @@ def create_datasets(
         num_proc=os.cpu_count(),  # Use all CPU cores.
     )
     tokenized_validation_dataset = validation_dataset.map(
+        function=tokenizer_function,
+        batched=True,
+        batch_size=batch_size,
+        num_proc=os.cpu_count(),  # Use all CPU cores.
+    )
+    tokenized_calibration_dataset = calibration_dataset.map(
         function=tokenizer_function,
         batched=True,
         batch_size=batch_size,
@@ -119,12 +131,16 @@ def create_datasets(
         type='torch',
         columns=['input_ids', 'attention_mask', 'labels'] + data_preprocessing.GROUP_LIST,
     )
+    tokenized_calibration_dataset.set_format(
+        type='torch',
+        columns=['input_ids', 'attention_mask', 'labels'] + data_preprocessing.GROUP_LIST,
+    )
     tokenized_test_dataset.set_format(
         type='torch',
         columns=['input_ids', 'attention_mask', 'labels'] + data_preprocessing.GROUP_LIST,
     )
 
-    return tokenized_train_dataset, tokenized_validation_dataset, tokenized_test_dataset
+    return tokenized_train_dataset, tokenized_validation_dataset, tokenized_calibration_dataset, tokenized_test_dataset
 
 
 def tokenize_dataset(

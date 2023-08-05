@@ -19,7 +19,7 @@ import torch
 import transformers
 
 import data
-from trainer import RandomizedIndividualCalibrationTrainer
+#from trainer2 import CommentRegressorTrainer
 from transformers import TrainingArguments, AutoTokenizer
 from plots import end_of_training_plots
 
@@ -77,25 +77,29 @@ def main():
 
     tokenized_train_dataset_name = 'tokenized_train_data.csv'  # TODO: Make this a flag
     tokenized_validation_dataset_name = 'tokenized_eval_data.csv'  # TODO: Make this a flag
+    tokenized_calibration_dataset_name = 'tokenized_calib_data.csv'  # TODO: Make this a flag
     tokenized_test_dataset_name = 'tokenized_test_data.csv'   # TODO: Make this a flag
 
     # Check if the tokenized datasets already exist. If so, load them. Otherwise, create them.
     datasets_exist = (
         os.path.exists(os.path.join('data', tokenized_train_dataset_name)) and
         os.path.exists(os.path.join('data', tokenized_validation_dataset_name)) and
+        os.path.exists(os.path.join('data', tokenized_calibration_dataset_name)) and
         os.path.exists(os.path.join('data', tokenized_test_dataset_name))
     )
 
     if datasets_exist:
         train_dataset = datasets.load_from_disk(os.path.join('data', tokenized_train_dataset_name))
         validation_dataset = datasets.load_from_disk(os.path.join('data', tokenized_validation_dataset_name))
+        calibration_dataset = datasets.load_from_disk(os.path.join('data', tokenized_calibration_dataset_name))
         test_dataset = datasets.load_from_disk(os.path.join('data', tokenized_test_dataset_name))
 
     # Load datasets
     else:
-        train_dataset, validation_dataset, test_dataset = data.create_datasets(
+        train_dataset, validation_dataset, calibration_dataset, test_dataset = data.create_datasets(
             train_file=data_args.train_file,
             validation_file=data_args.validation_file,
+            calib_file=data_args.calib_file,
             test_file=data_args.test_file,
             tokenizer_function=tokenizer_function,
             batch_size=model_args.tokenizer_batch_size,
@@ -105,6 +109,9 @@ def main():
         )
         validation_dataset.save_to_disk(
             os.path.join('data', tokenized_validation_dataset_name),
+        )
+        calibration_dataset.save_to_disk(
+            os.path.join('data', tokenized_calibration_dataset_name),
         )
         test_dataset.save_to_disk(
             os.path.join('data', tokenized_test_dataset_name),
@@ -139,6 +146,7 @@ def main():
         tokenizer=tokenizer,
         train_dataset=train_dataset['train'],
         validation_dataset=validation_dataset['train'],
+        calibration_dataset=calibration_dataset['train'],
         test_dataset=test_dataset['train'],
         coefficient=training_args.coefficient,
         optimizer=optimizer,
@@ -149,16 +157,23 @@ def main():
         test_batch_size=training_args.per_device_eval_batch_size,
         training_accumulation_steps=training_args.training_accumulation_steps,
         validation_accumulation_steps=training_args.eval_accumulation_steps,
+        eval_steps=training_args.eval_steps,
     )
     trainer.train(
         epochs=training_args.num_train_epochs,
     )
 
     # Evaluate the model on the test set
-    test_metrics = trainer.eval_iter(model=trainer.model,
-                                     validation_loader=trainer.test_loader)
+    test_metrics = trainer.eval(validation_loader=trainer.test_loader,
+                                validation_accumulation_steps=trainer.validation_accumulation_steps,
+                                with_wandb=False)
+
     end_of_training_plots(eval_result=test_metrics,
-                          alpha=training_args.coefficient)
+                          alpha=training_args.coefficient,
+                          data_title="",
+                          wandb_run=None) #add wandb?
+
+    print("\n\nDone")
 
 if __name__ == '__main__':
     main()
