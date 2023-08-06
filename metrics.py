@@ -35,6 +35,7 @@ class MetricManager:
         # Check if the directory is empty
         if not dirs:
             # If it is empty, create a new directory with the name "exp1_coef_{coefficient}"
+            self.exp_name = "exp1_coef_{}".format(self.coefficient)
             self.new_dir_name = os.path.join(self.metric_dir_path, "exp1_coef_{}".format(self.coefficient))
             if accelerator.is_local_main_process:
                 os.mkdir(self.new_dir_name)
@@ -42,12 +43,11 @@ class MetricManager:
             # If it is not empty, find the directory with the largest "exp" number
             exp_numbers = [int(d.split('exp')[1].split('_')[0]) for d in dirs if 'exp' in d]
             max_exp_number = max(exp_numbers) if exp_numbers else 0
-
             # Create a new directory with the name "exp{max_exp_number + 1}_coef_{coefficient}"
-            self.new_dir_name = os.path.join(self.metric_dir_path,
-                                             "exp{}_coef_{}".format(max_exp_number + 1, self.coefficient))
-            if accelerator.is_local_main_process:
-                os.mkdir(self.new_dir_name)
+            self.exp_name = "exp{}_coef_{}".format(max_exp_number + 1, self.coefficient)
+        self.new_dir_name = os.path.join(self.metric_dir_path, self.exp_name)
+        if accelerator.is_local_main_process:
+            os.mkdir(self.new_dir_name)
 
     def add_dict_metrics(self, step, metrics_dict):
         for metric_name, metric_value in metrics_dict.items():

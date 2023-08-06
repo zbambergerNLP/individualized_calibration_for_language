@@ -44,6 +44,8 @@ class TrainingArguments:
     learning_rate: float = field(default=1e-5, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
     warmup_ratio: float = field(default=0.1, metadata={"help": "The ratio of warmup steps to total training steps."})
+    patience: int = field(default=3, metadata={"help": "The number of epochs to wait for the validation loss to"
+                                                       " improve before early stopping."})
     logging_steps: int = field(default=50, metadata={"help": "Log every X updates steps."})
     eval_accumulation_steps: int = field(
         default=4, metadata={"help": "Number of eval steps to accumulate before performing backward pass."}
