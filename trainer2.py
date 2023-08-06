@@ -1,4 +1,5 @@
 import math
+import os
 
 import accelerate
 import datasets
@@ -40,6 +41,7 @@ class CommentRegressorTrainer:
             logging_steps: int = 50,
             eval_steps: int = 200,
             save_steps: int = 1000,
+            patience: int = 3,
     ):
         """Initialize the trainer.
 
@@ -120,6 +122,14 @@ class CommentRegressorTrainer:
         self.training_accumulation_steps = training_accumulation_steps
         self.validation_accumulation_steps = validation_accumulation_steps
         self.training_step = 0
+
+        # Early stopping
+        self.patience = patience
+        self.patience_counter = 0
+        self.best_model_checkpoint = None
+        self.best_model_loss = math.inf
+        self.best_checkpoint_path = os.path.join('checkpoints', self.metric_manager.exp_name, 'best_model')
+        os.makedirs(self.best_checkpoint_path, exist_ok=True)
 
     def _set_up_dataloaders(
             self,
@@ -262,6 +272,11 @@ class CommentRegressorTrainer:
                         val_metrics = self.eval(self.validation_loader, self.validation_accumulation_steps)
                         self.metric_manager.add_dict_metrics(step=self.training_step, metrics_dict=val_metrics)
                         self.metric_manager.create_all_metrics_plots()
+                        stop_early = self._perform_early_stopping(val_metrics["loss"])
+                        if stop_early:
+                            self.metric_manager.save_metrics()
+                            self.accelerator.end_training()
+                            return
 
                     if step % self.save_steps == 0:
                         experiment_name = (
@@ -392,3 +407,21 @@ class CommentRegressorTrainer:
         # Total loss is a function of both the cdf loss (fairness) and the nll loss (sharpness/accuracy).
         loss = (1 - self.coefficient) * loss_cdf + self.coefficient * loss_nll
         return loss
+
+
+    def _perform_early_stopping(
+            self,
+            val_loss: float,
+    ) -> bool:
+        if val_loss < self.best_model_loss:
+            self.best_val_loss = val_loss
+            self.patience_counter = 0
+            self.accelerator.save_state(self.best_checkpoint_path)
+            return False
+        else:
+            self.patience_counter += 1
+            if self.patience_counter >= self.patience:
+                self.accelerator.print(f"Early stopping with best validation loss: {self.best_val_loss}")
+                return True
+            return False
+

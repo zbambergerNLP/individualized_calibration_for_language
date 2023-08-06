@@ -167,10 +167,15 @@ def main():
         training_accumulation_steps=training_args.training_accumulation_steps,
         validation_accumulation_steps=training_args.eval_accumulation_steps,
         eval_steps=training_args.eval_steps,
+        patience=training_args.patience,
     )
     trainer.train(
         epochs=training_args.num_train_epochs,
     )
+
+
+    # Extract best model from checkpoint/best_model
+    trainer.model = trainer.model.from_pretrained(trainer.best_checkpoint_path)
 
     # Evaluate the model on the test set
     test_metrics = trainer.eval(validation_loader=trainer.test_loader,
