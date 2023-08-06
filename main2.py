@@ -17,6 +17,7 @@ import model as comment_regressor
 import datasets
 import torch
 import transformers
+from transformers import get_linear_schedule_with_warmup
 
 import data
 #from trainer2 import CommentRegressorTrainer
@@ -136,9 +137,17 @@ def main():
     optimizer = torch.optim.Adam(
         experiment_model.parameters(),
         lr=training_args.learning_rate)
+    """
     scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer,
     )
+    """
+    total_steps = int(
+            (len(train_dataset['train']) / training_args.per_device_train_batch_size) * training_args.num_train_epochs
+    )
+    scheduler = get_linear_schedule_with_warmup(optimizer,
+                                    num_warmup_steps=int(training_args.warmup_ratio * total_steps),
+                                    num_training_steps=total_steps)
 
     # Create a trainer for the experiment model
     trainer = trainer2.CommentRegressorTrainer(

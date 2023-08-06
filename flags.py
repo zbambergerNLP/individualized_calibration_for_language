@@ -41,9 +41,9 @@ class TrainingArguments:
     coefficient: float = field(
         default=0.8, metadata={"help": "The coefficient for the calibration loss."}
     )
-    learning_rate: float = field(default=1e-4, metadata={"help": "The initial learning rate for AdamW."})
+    learning_rate: float = field(default=1e-5, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
-    warmup_ratio: int = field(default=0.1, metadata={"help": "The ratio of warmup steps to total training steps."})
+    warmup_ratio: float = field(default=0.1, metadata={"help": "The ratio of warmup steps to total training steps."})
     logging_steps: int = field(default=50, metadata={"help": "Log every X updates steps."})
     eval_accumulation_steps: int = field(
         default=4, metadata={"help": "Number of eval steps to accumulate before performing backward pass."}
@@ -53,7 +53,7 @@ class TrainingArguments:
     )
     save_steps: int = field(default=500_000, metadata={"help": "Save checkpoint every X updates steps."})
     # TODO: Switch eval_steps back to 1_000 after debugging.
-    eval_steps: int = field(default=2_000, metadata={"help": "Run evaluation every X updates steps."})
+    eval_steps: int = field(default=1_000, metadata={"help": "Run evaluation every X updates steps."})
     dataloader_num_workers: int = field(
         default=20, metadata={"help": "Number of subprocesses to use for data loading."}
     )

@@ -253,11 +253,14 @@ class CommentRegressorTrainer:
                             },
                             step=step,
                         )
-                        self.metric_manager.add_metric(step=step, metric_name="training_loss", metric_value=loss.item())
+                        self.metric_manager.add_metric(step=self.training_step, metric_name="training_loss",
+                                                       metric_value=loss.item())
+                        self.metric_manager.add_metric(step=self.training_step, metric_name="lr",
+                                                       metric_value=learning_rate)
 
                     if step % self.eval_steps == 0:
                         val_metrics = self.eval(self.validation_loader, self.validation_accumulation_steps)
-                        self.metric_manager.add_dict_metrics(step=step, metrics_dict=val_metrics)
+                        self.metric_manager.add_dict_metrics(step=self.training_step, metrics_dict=val_metrics)
                         self.metric_manager.create_all_metrics_plots()
 
                     if step % self.save_steps == 0:
