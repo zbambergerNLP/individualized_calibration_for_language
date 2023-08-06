@@ -68,7 +68,7 @@ def create_datasets(
         tokenizer_function: typing.Callable[
             [typing.Dict[str, typing.Any]], typing.Dict[str, typing.Any]] = None,
         batch_size: int = 32,
-) -> typing.Tuple[datasets.Dataset, datasets.Dataset, datasets.Dataset]:
+) -> typing.Tuple[datasets.Dataset, datasets.Dataset, datasets.Dataset, datasets.Dataset]:
     """Create the training and test data loaders.
 
     Args:
@@ -80,7 +80,7 @@ def create_datasets(
         batch_size: The batch size.
 
     Returns:
-        A 3-tuple containing the training, validation, and test datasets respectively.
+        A 4-tuple containing the training, validation, calibration, and test datasets respectively.
     """
 
     train_dataset = datasets.load_dataset(

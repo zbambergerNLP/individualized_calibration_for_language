@@ -1,6 +1,7 @@
 import math
 import os
 
+import accelerate
 import torch
 import model as individualized_calibration_model
 from sklearn.metrics import confusion_matrix, roc_auc_score
@@ -16,8 +17,9 @@ class MetricManager:
         Args:
             coefficient: The coefficient of the loss.
         """
-    def __init__(self, coefficient):
+    def __init__(self, coefficient, accelerator: accelerate.Accelerator):
         self.coefficient = coefficient
+        self.accelerator = accelerator
         self.colors = ['red', 'orange', 'gold', 'lime', 'darkcyan', 'blue', 'cyan',
                        'magenta', 'purple', 'black', 'gray', 'brown']
         self.metrics = {}
@@ -34,7 +36,8 @@ class MetricManager:
         if not dirs:
             # If it is empty, create a new directory with the name "exp1_coef_{coefficient}"
             self.new_dir_name = os.path.join(self.metric_dir_path, "exp1_coef_{}".format(self.coefficient))
-            os.mkdir(self.new_dir_name)
+            if accelerator.is_local_main_process:
+                os.mkdir(self.new_dir_name)
         else:
             # If it is not empty, find the directory with the largest "exp" number
             exp_numbers = [int(d.split('exp')[1].split('_')[0]) for d in dirs if 'exp' in d]
@@ -43,7 +46,8 @@ class MetricManager:
             # Create a new directory with the name "exp{max_exp_number + 1}_coef_{coefficient}"
             self.new_dir_name = os.path.join(self.metric_dir_path,
                                              "exp{}_coef_{}".format(max_exp_number + 1, self.coefficient))
-            os.mkdir(self.new_dir_name)
+            if accelerator.is_local_main_process:
+                os.mkdir(self.new_dir_name)
 
     def add_dict_metrics(self, step, metrics_dict):
         for metric_name, metric_value in metrics_dict.items():
@@ -56,7 +60,6 @@ class MetricManager:
             self.metrics[metric_name]['values'] = []
         self.metrics[metric_name]['steps'].append(step)
         self.metrics[metric_name]['values'].append(metric_value)
-
 
     def create_all_metrics_plots(self):
         # Create a new figure for each metric and save it in the directory
@@ -74,19 +77,22 @@ class MetricManager:
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.title("{} (alpha = {})".format(metric_name, self.coefficient))
             plt.tight_layout()  # Adjust the spacing around the plot
-            plt.savefig(self.new_dir_name + "/" + metric_name + '.png')
+            if self.accelerator.is_local_main_process:
+                plt.savefig(self.new_dir_name + "/" + metric_name + '.png')
             plt.close()
 
     def save_metrics(self):
         # Save the metrics in a file in the directory
-        with open(os.path.join(self.new_dir_name, 'metrics.pkl'), 'wb') as fp:
-            pickle.dump(self.metrics, fp)
+        if self.accelerator.is_local_main_process:
+            with open(os.path.join(self.new_dir_name, 'metrics.pkl'), 'wb') as fp:
+                pickle.dump(self.metrics, fp)
 
 
 def compute_metrics(
         eval_pred: individualized_calibration_model.CommentRegressorPrediction,
         coefficient: float,
         eval_with_sample: bool = False,
+        prefix: str = "eval"
 ) -> dict[str, float]:
     """Compute metrics for the evaluation predictions (e.g., TPR, FPR, AUC, precision, recall, F1).
 
@@ -98,6 +104,8 @@ def compute_metrics(
         - stddevs: The predicted standard deviations of the Gaussian distribution for each sample in the evaluation set.
     :param eval_with_sample: Whether to evaluate with a sample from the predicted distribution or with the mean of the
         predicted distribution.
+    :param coefficient: The coefficient of the loss.
+    :param prefix: The prefix to use for the metrics.
     :return: A dictionary containing the metrics.
         Contains the following metrics:
         - TPR: True positive rate (TP / (TP + FN))
@@ -155,7 +163,7 @@ def compute_metrics(
     # Update the metrics_dict with the tmp_metrics_dict
     for group_name in tmp_metrics_dict.keys():
         for metric in tmp_metrics_dict[group_name].keys():
-            metrics_dict[group_name + "_" + metric] = tmp_metrics_dict[group_name][metric]
+            metrics_dict[f"{prefix}_{group_name }_{metric}"] = tmp_metrics_dict[group_name][metric]
 
     # for each metric, Compute the biggest differences between the groups
     # TODO: Recover the biggest differences between the groups for each metric (by uncommenting the below).
@@ -258,18 +266,31 @@ def compute_metrics_from_pred(
         'Accuracy': accuracy,
     }
 
-    if not full_dataset:
-        # BPSN (Background Positive, Subgroup Negative) AUC -
-        # Restrict the test set to non-abusive examples that mention the identity and abusive examples that do not.
-        bpsn_mask = (target_labels & ~group_mask) | (~target_labels & group_mask)
-        bpsn_auc = roc_auc_score(target_labels[bpsn_mask].cpu().numpy(), pred_values[bpsn_mask].cpu().numpy())
-
-        # BNSP (Background Negative, Subgroup Positive) AUC -
-        # Restrict the test set to abusive examples that mention the identity and non-abusive examples that do not.
-        bnsp_mask = (target_labels & group_mask) | (~target_labels & ~group_mask)
-        bnsp_auc = roc_auc_score(target_labels[bnsp_mask].cpu().numpy(), pred_values[bnsp_mask].cpu().numpy())
-
-        metrics['BPSN_AUC'] = bpsn_auc
-        metrics['BNSP_AUC'] = bnsp_auc
+    # if not full_dataset:
+    #     # BPSN (Background Positive, Subgroup Negative) AUC -
+    #     # Restrict the test set to non-abusive examples that mention the identity and abusive examples that do not.
+    #     # print(f'group_mask: {group_mask}')
+    #     # print(f'group mask has {group_mask.sum()} True values')
+    #     # print(f'target_labels: {target_labels}')
+    #     # print(f'pred_values: {pred_values}')
+    #     print(f'num target labels in group greater than 0.5: {(target_labels[group_mask] > 0.5).sum()}')
+    #     print(f'num target labels in group less than 0.5: {(target_labels[group_mask] < 0.5).sum()}')
+    #     print(f'num target labels in group equal to 0: {(target_labels[group_mask] == 0).sum()}')
+    #     print(f'num target labels in group equal to 1: {(target_labels[group_mask] == 1).sum()}')
+    #     bpsn_mask = (target_labels & ~group_mask) | (~target_labels & group_mask)
+    #     print(f'bpsn_mask: {bpsn_mask}')
+    #     print(f'bpsn mask has {bpsn_mask.sum()} True values')
+    #     print(f'target_labels[bpsn_mask]: {target_labels[bpsn_mask]}')
+    #     if target_labels[bpsn_mask].sum() == 0:
+    #         print('BPSN mask has no positive labels')
+    #     bpsn_auc = roc_auc_score(target_labels[bpsn_mask].cpu().numpy(), pred_values[bpsn_mask].cpu().numpy())
+    #
+    #     # BNSP (Background Negative, Subgroup Positive) AUC -
+    #     # Restrict the test set to abusive examples that mention the identity and non-abusive examples that do not.
+    #     bnsp_mask = (target_labels & group_mask) | (~target_labels & ~group_mask)
+    #     bnsp_auc = roc_auc_score(target_labels[bnsp_mask].cpu().numpy(), pred_values[bnsp_mask].cpu().numpy())
+    #
+    #     metrics['BPSN_AUC'] = bpsn_auc
+    #     metrics['BNSP_AUC'] = bnsp_auc
 
     return metrics

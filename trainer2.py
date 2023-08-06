@@ -1,3 +1,4 @@
+import copy
 import math
 
 import accelerate
@@ -6,9 +7,10 @@ import tqdm
 import torch
 import numpy as np
 import typing
-
+import os
 import transformers
-#import evaluate
+from transformers.trainer_pt_utils import nested_concat, nested_numpify
+
 import wandb
 from typing import List, Dict, Tuple, Optional, Union, Any
 
@@ -16,10 +18,12 @@ import data
 from model import CommentRegressorPrediction
 from metrics import MetricManager, compute_metrics
 
+
 class CommentRegressorTrainer:
 
     def __init__(
             self,
+            output_dir: str,
             model: torch.nn.Module,
             tokenizer: transformers.PreTrainedTokenizer,
             train_dataset: datasets.Dataset,
@@ -40,10 +44,12 @@ class CommentRegressorTrainer:
             logging_steps: int = 50,
             eval_steps: int = 200,
             save_steps: int = 1000,
+            patience: int = 3,
     ):
         """Initialize the trainer.
 
         Args:
+            output_dir: The directory to save the model and results to.
             model: The model to train.
             tokenizer: The tokenizer to use.
             train_dataset: The training dataset.
@@ -66,18 +72,18 @@ class CommentRegressorTrainer:
             logging_steps: The number of steps to take before logging.
             eval_steps: The number of steps to take before evaluating.
             save_steps: The number of steps to take before saving.
+            patience: The number of steps to wait before early stopping.
         """
-        # Create metric manager to save and plot the metrics
-        self.metric_manager = MetricManager(coefficient=coefficient)
-
-
+        self.output_dir = output_dir
         if accelerator is None:
             accelerator = accelerate.Accelerator(
                 gradient_accumulation_steps=training_accumulation_steps,
-                #log_with='wandb',
+                log_with='wandb',
 
             )
         self.accelerator = accelerator
+        # Create metric manager to save and plot the metrics
+        self.metric_manager = MetricManager(coefficient=coefficient, accelerator=accelerator)
         self.initial_learning_rate = optimizer.defaults.get('lr')
 
         self.tokenizer = tokenizer
@@ -120,6 +126,17 @@ class CommentRegressorTrainer:
         self.training_accumulation_steps = training_accumulation_steps
         self.validation_accumulation_steps = validation_accumulation_steps
         self.training_step = 0
+        self.training_batch_size = train_batch_size
+        self.validation_batch_size = validation_batch_size
+
+        # Early stopping
+        self.patience = patience
+        self.patience_counter = 0
+        self.best_model_checkpoint = None
+        self.best_model_loss = math.inf
+        self.best_checkpoint_path = os.path.join(self.output_dir, 'best_model')
+        os.makedirs(self.best_checkpoint_path, exist_ok=True)
+        self.best_checkpoint_path = os.path.join(self.best_checkpoint_path, 'best_model.pt')
 
     def _set_up_dataloaders(
             self,
@@ -230,47 +247,64 @@ class CommentRegressorTrainer:
                     }
                     model_outputs = self.model(**model_inputs)
                     mean_pred, output_pred = model_outputs
-                    loss = self.compute_loss(
+                    cdf_loss, nll_loss, total_loss = self.compute_loss(
                         input_r=batch["input_r"],
                         mean_pred=mean_pred,
                         std_pred=output_pred,
                         labels=batch["labels"],
                     )
-                    self.accelerator.backward(loss)
+                    self.accelerator.backward(total_loss)
                     self.optimizer.step()
                     self.scheduler.step()
                     self.optimizer.zero_grad()
                     if step % self.logging_steps == 0:
-                        self.accelerator.print(
-                            f"Epoch: {epoch} | Step: {step} | Loss: {loss.item():.3f}"
-                        )
                         learning_rate = self.optimizer.param_groups[0]["lr"]
+                        self.accelerator.print(
+                            f"Epoch: {total_loss} | "
+                            f"Step: {total_loss} | "
+                            f"Loss: {total_loss.item():.3f} | "
+                            f"CDF Loss: {cdf_loss.item():.3f} | "
+                            f"NLL Loss: {nll_loss.item():.3f} | "
+                            f"LR: {self.optimizer.param_groups[0]['lr']:.6f}"
+                        )
                         self.accelerator.log(
                             {
                                 "training_step": step,
-                                "training_loss": loss.item(),
+                                "training_loss": total_loss.item(),
                                 "learning_rate": learning_rate,
+                                "cdf_loss": cdf_loss.item(),
+                                "nll_loss": nll_loss.item(),
                             },
                             step=step,
                         )
                         self.metric_manager.add_metric(step=self.training_step, metric_name="training_loss",
-                                                       metric_value=loss.item())
+                                                       metric_value=total_loss.item())
+                        self.metric_manager.add_metric(step=self.training_step, metric_name="cdf_loss",
+                                                       metric_value=cdf_loss.item())
+                        self.metric_manager.add_metric(step=self.training_step, metric_name="nll_loss",
+                                                       metric_value=nll_loss.item())
                         self.metric_manager.add_metric(step=self.training_step, metric_name="lr",
                                                        metric_value=learning_rate)
 
                     if step % self.eval_steps == 0:
                         val_metrics = self.eval(self.validation_loader, self.validation_accumulation_steps)
+                        self.accelerator.log(val_metrics, step=step)
                         self.metric_manager.add_dict_metrics(step=self.training_step, metrics_dict=val_metrics)
                         self.metric_manager.create_all_metrics_plots()
+                        stop_early = self._perform_early_stopping(val_metrics["loss"])
+                        if stop_early:
+                            self.metric_manager.save_metrics()
+                            self.accelerator.end_training()
+                            return
 
                     if step % self.save_steps == 0:
-                        experiment_name = (
-                            f'seed_{self.seed}_'
-                            f'coefficient_{str(self.coefficient).replace(".", "_")}_'
-                            f'lr_{str(self.initial_learning_rate).replace(".", "_")}_'
-                            f'step_{self.training_step-1}')
-                        #self.accelerator.print(f"Saving model to `checkpoints/{experiment_name}`")
-                        #self.accelerator.save_state(f"checkpoints/{experiment_name}")
+                        checkpoint_dir = os.path.join(self.output_dir, f"checkpoint_{self.training_step-1}")
+
+                        if not os.path.exists(checkpoint_dir) and self.accelerator.is_local_main_process:
+                            os.makedirs(checkpoint_dir)
+                        self.accelerator.print(f"Saving model to `{checkpoint_dir}`")
+                        self.accelerator.save_state(checkpoint_dir)
+
         self.metric_manager.save_metrics()
         self.accelerator.end_training()
 
@@ -286,16 +320,23 @@ class CommentRegressorTrainer:
         Args:
             validation_loader: The validation dataloader.
             validation_accumulation_steps: The number of steps to accumulate gradients over.
+            with_wandb: Whether to log the results to wandb.
         """
         self.model.eval()
 
-        all_losses = []                                                   # type: List[torch.Tensor]
-        losses = []                                                   # type: List[torch.Tensor]
-        groups = {group_name: [] for group_name in self.group_names}  # type: Dict[str, List[torch.Tensor]]
-        means = []                                                    # type: List[torch.Tensor]
-        stddevs = []                                                  # type: List[torch.Tensor]
-        labels = []                                                   # type: List[torch.Tensor]
-        input_rs = []                                                 # type: List[torch.Tensor]
+        all_losses = None                                           # type: Union[np.ndarray, None]
+        all_groups = {}                                             # type: Dict[str, np.ndarray]
+        all_means = None                                            # type: Union[np.ndarray, None]
+        all_stddevs = None                                          # type: Union[np.ndarray, None]
+        all_labels = None                                           # type: Union[np.ndarray, None]
+        all_input_rs = None                                         # type: Union[np.ndarray, None]
+
+        losses_host = None                                          # type: Union[List[torch.Tensor], None]
+        groups_host = {}                                            # type: Dict[str, Union[List[torch.Tensor]]]
+        means_host = None                                           # type: Union[List[torch.Tensor], None]
+        stddevs_host = None                                         # type: Union[List[torch.Tensor], None]
+        labels_host = None                                          # type: Union[List[torch.Tensor], None]
+        input_rs_host = None                                        # type: Union[List[torch.Tensor], None]
 
         for step, batch in tqdm.tqdm(
                 enumerate(validation_loader),
@@ -310,6 +351,10 @@ class CommentRegressorTrainer:
                 "attention_mask": batch["attention_mask"],
                 "input_r": batch["input_r"],
             }
+            groups = {}
+            for group_name in self.group_names:
+                groups[group_name] = batch.pop(group_name)
+
             with torch.no_grad():
                 model_outputs = self.model(**model_inputs)
             mean_pred, std_pred = model_outputs
@@ -320,47 +365,121 @@ class CommentRegressorTrainer:
                 labels=batch["labels"],
             )
 
-            # Accumulate losses, groups, predictions, labels, and input_rs
-            losses.append(loss)
-            for group_name in self.group_names:
-                groups[group_name].append(batch[group_name].cpu())
-            means.append(mean_pred.cpu())
-            stddevs.append(std_pred.cpu())
-            labels.append(batch["labels"].cpu())
-            input_rs.append(batch["input_r"].cpu())
+            if loss is not None:
+                losses = self.accelerator.gather_for_metrics(loss.repeat(self.validation_batch_size))
+                losses_host = losses if losses_host is None else nested_concat(losses_host, losses)
 
-            # If we have accumulated enough, then append to all_losses, all_groups, all_predictions, all_labels,
-            # and all_input_rs
-            if len(losses) % validation_accumulation_steps:
-                loss = torch.mean(torch.stack(losses))
-                all_losses.append(loss)
-                losses = []
+            if mean_pred is not None:
+                mean_preds = self.accelerator.gather_for_metrics(mean_pred)
+                means_host = mean_preds if means_host is None else nested_concat(means_host, mean_preds)
 
-        loss = torch.mean(torch.stack(all_losses))
-        if with_wandb:
-            self.accelerator.print(f"Validation Loss: {loss.item():.3f}")
-            self.accelerator.log({"validation_loss": loss.item()}, step=self.training_step-1)
-        self.model.train()
+            if std_pred is not None:
+                std_preds = self.accelerator.gather_for_metrics(std_pred)
+                stddevs_host = std_preds if stddevs_host is None else nested_concat(stddevs_host, std_preds)
 
-        # Accumulate the predictions, labels, groups and input_r.
-        mean_list = np.array(torch.cat(means))
-        stddev_list = np.array(torch.cat(stddevs))
-        input_r_list = np.array(torch.cat(input_rs))
-        targets_list = np.array(torch.cat(labels))
+            if batch["labels"] is not None:
+                labels = self.accelerator.gather_for_metrics(batch["labels"])
+                labels_host = labels if labels_host is None else nested_concat(labels_host, labels)
 
-        for group_name in self.group_names:
-            groups[group_name] = np.array(torch.cat(groups[group_name]))
+            if batch["input_r"] is not None:
+                input_rs = self.accelerator.gather_for_metrics(batch["input_r"])
+                input_rs_host = input_rs if input_rs_host is None else nested_concat(input_rs_host, input_rs)
 
-        comment_reg_pred = CommentRegressorPrediction(means=mean_list,
-                                                      stddevs=stddev_list,
-                                                      input_r=input_r_list,
-                                                      label_ids=targets_list,
-                                                      groups=groups)
+            if groups != {}:
+                for group in groups:
+                    groups[group] = self.accelerator.gather_for_metrics((groups[group]))
+                    if group not in groups_host:
+                        groups_host[group] = groups[group]
+                    else:
+                        groups_host[group] = nested_concat(groups_host[group], groups[group])
+
+            if step % validation_accumulation_steps == 0 and self.accelerator.sync_gradients:
+                if losses_host is not None:
+                    losses = nested_numpify(losses_host)
+                    all_losses = losses if all_losses is None else np.concatenate((all_losses, losses), axis=0)
+
+                if means_host is not None:
+                    means = nested_numpify(means_host)
+                    all_means = means if all_means is None else np.concatenate((all_means, means), axis=0)
+
+                if stddevs_host is not None:
+                    stddevs = nested_numpify(stddevs_host)
+                    all_stddevs = stddevs if all_stddevs is None else np.concatenate((all_stddevs, stddevs), axis=0)
+
+                if labels_host is not None:
+                    labels = nested_numpify(labels_host)
+                    all_labels = labels if all_labels is None else np.concatenate((all_labels, labels), axis=0)
+
+                if input_rs_host is not None:
+                    input_rs = nested_numpify(input_rs_host)
+                    all_input_rs = input_rs if all_input_rs is None else np.concatenate((all_input_rs, input_rs), axis=0)
+
+                if groups_host is not None:
+                    for group_name in groups_host:
+                        group_value = nested_numpify(groups_host[group_name])
+                        all_groups[group_name] = (
+                            group_value if group_name not in all_groups else nested_concat(
+                                all_groups[group_name],
+                                group_value,
+                            )
+                        )
+
+                losses_host = None
+                means_host = None
+                stddevs_host = None
+                labels_host = None
+                input_rs_host = None
+                groups_host = {}
+
+        if losses_host is not None:
+            losses = nested_numpify(losses_host)
+            all_losses = losses if all_losses is None else np.concatenate((all_losses, losses), axis=0)
+
+        if means_host is not None:
+            means = nested_numpify(means_host)
+            all_means = means if all_means is None else np.concatenate((all_means, means), axis=0)
+
+        if stddevs_host is not None:
+            stddevs = nested_numpify(stddevs_host)
+            all_stddevs = stddevs if all_stddevs is None else np.concatenate((all_stddevs, stddevs), axis=0)
+
+        if labels_host is not None:
+            labels = nested_numpify(labels_host)
+            all_labels = labels if all_labels is None else np.concatenate((all_labels, labels), axis=0)
+
+        if input_rs_host is not None:
+            input_rs = nested_numpify(input_rs_host)
+            all_input_rs = input_rs if all_input_rs is None else np.concatenate((all_input_rs, input_rs), axis=0)
+
+        if groups_host is not None:
+            for group_name in groups_host:
+                group_value = nested_numpify(groups_host[group_name])
+                all_groups[group_name] = (
+                    group_value if group_name not in all_groups else nested_concat(
+                        all_groups[group_name],
+                        group_value,
+                    )
+                )
+        comment_reg_pred = CommentRegressorPrediction(
+            means=all_means,
+            stddevs=all_stddevs,
+            input_r=all_input_rs,
+            label_ids=all_labels,
+            groups=all_groups)
+
+        if self.accelerator.is_main_process:
+            self.accelerator.print(
+                f"{self.training_step-1} - Validation loss: {np.mean(all_losses):.4f}"
+            )
 
         # Creates the metrics
-        metric_eval = compute_metrics(eval_pred=comment_reg_pred, coefficient=self.coefficient)
-        if with_wandb:
-            self.accelerator.log(metric_eval, step=self.training_step - 1)
+        metric_eval = compute_metrics(
+            eval_pred=comment_reg_pred,
+            coefficient=self.coefficient,
+            prefix="eval",
+        )
+        metric_eval["eval_loss"] = all_losses.mean().item()
+        self.accelerator.log(metric_eval, step=self.training_step - 1)
         return metric_eval
 
     def compute_loss(
@@ -369,7 +488,7 @@ class CommentRegressorTrainer:
             mean_pred: torch.Tensor,
             std_pred: torch.Tensor,
             labels: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute the loss.
 
         Args:
@@ -379,7 +498,7 @@ class CommentRegressorTrainer:
             labels: The labels.
 
         Returns:
-            The loss scalar.
+            A three-tuple consisting of the cdf loss, the nll loss, and the total loss.
         """
         cdf = 0.5 * (1.0 + torch.erf((labels - mean_pred) / std_pred / torch.sqrt(torch.tensor(2))))
         loss_cdf = torch.abs(cdf - input_r).mean()
@@ -390,5 +509,24 @@ class CommentRegressorTrainer:
         loss_nll = loss_nll.mean()
 
         # Total loss is a function of both the cdf loss (fairness) and the nll loss (sharpness/accuracy).
-        loss = (1 - self.coefficient) * loss_cdf + self.coefficient * loss_nll
-        return loss
+        total_loss = (1 - self.coefficient) * loss_cdf + self.coefficient * loss_nll
+        return loss_cdf, loss_nll, total_loss
+
+    def _perform_early_stopping(
+            self,
+            val_loss: float,
+    ) -> bool:
+        if val_loss < self.best_model_loss:
+            self.best_model_loss = val_loss
+            self.patience_counter = 0
+            self.best_model_checkpoint = copy.deepcopy(self.model)
+            return False
+        else:
+            self.patience_counter += 1
+            print("\n----------- patience_counter += 1 -----------")
+            if self.patience_counter >= self.patience:
+                self.accelerator.print(f"Early stopping with best validation loss: {self.best_model_loss}")
+                self.model = self.best_model_checkpoint
+                print("\n----------Perform early stopping----------")
+                return True
+            return False

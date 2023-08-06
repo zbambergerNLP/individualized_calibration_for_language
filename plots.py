@@ -64,7 +64,9 @@ def end_of_training_plots(
         eval_result[metric + '_best_group'] =  min(cuur_list)
 
     # Metrics that bigger is better
-    for metric in ['Accuracy', 'F1', 'TPR', 'BPSN_AUC', 'BNSP_AUC']:
+    for metric in ['Accuracy', 'F1', 'TPR',
+                   # 'BPSN_AUC', 'BNSP_AUC',
+                   ]:
         curr_list = [value for key, value in eval_result.items()
                 if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
         if len(curr_list) == 0:
@@ -73,7 +75,9 @@ def end_of_training_plots(
         eval_result[metric + '_best_group'] = max(curr_list)
 
     # Finds the mean metric value between all the groups
-    for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'Accuracy', 'F1', 'TPR', 'FPR', 'BPSN_AUC', 'BNSP_AUC']:
+    for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'Accuracy', 'F1', 'TPR', 'FPR',
+                   # 'BPSN_AUC', 'BNSP_AUC',
+                   ]:
         curr_list = [value for key, value in eval_result.items()
                 if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
         if len(curr_list) == 0:
@@ -87,10 +91,10 @@ def end_of_training_plots(
                 wandb_run=wandb_run)
 
     # Classification metrics graphs (worst group)
-    update_plot(eval_result, key_x='BPSN_AUC_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
-                wandb_run=wandb_run)
-    update_plot(eval_result, key_x='BNSP_AUC_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
-                wandb_run=wandb_run)
+    # update_plot(eval_result, key_x='BPSN_AUC_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
+    #             wandb_run=wandb_run)
+    # update_plot(eval_result, key_x='BNSP_AUC_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
+    #             wandb_run=wandb_run)
     update_plot(eval_result, key_x='Accuracy_worst_group', key_y='Accuracy', alpha=alpha, data_title=data_title,
                 wandb_run=wandb_run)
     update_plot(eval_result, key_x='F1_worst_group', key_y='F1', alpha=alpha, data_title=data_title,
@@ -101,10 +105,10 @@ def end_of_training_plots(
                 wandb_run=wandb_run)
 
     # Classification metrics graphs (best group)
-    update_plot(eval_result, key_x='BPSN_AUC_best_group', key_y='BPSN_AUC_worst_group', alpha=alpha, data_title=data_title,
-        wandb_run=wandb_run)
-    update_plot(eval_result, key_x='BNSP_AUC_best_group', key_y='BNSP_AUC_worst_group', alpha=alpha, data_title=data_title,
-                wandb_run=wandb_run)
+    # update_plot(eval_result, key_x='BPSN_AUC_best_group', key_y='BPSN_AUC_worst_group', alpha=alpha, data_title=data_title,
+    #     wandb_run=wandb_run)
+    # update_plot(eval_result, key_x='BNSP_AUC_best_group', key_y='BNSP_AUC_worst_group', alpha=alpha, data_title=data_title,
+    #             wandb_run=wandb_run)
     update_plot(eval_result, key_x='Accuracy_best_group', key_y='Accuracy_worst_group', alpha=alpha, data_title=data_title,
                 wandb_run=wandb_run)
     update_plot(eval_result, key_x='F1_best_group', key_y='F1_worst_group', alpha=alpha, data_title=data_title,
@@ -131,6 +135,8 @@ def update_plot(
     :param key_y: The key of the y axis in the data dictionary.
     :param alpha: The coefficient of the loss function (balances between the performance-oriented loss and the
         fairness-oriented loss).
+    :param data_title: The title of the data.
+    :param wandb_run: The wandb run object.
     """
     if key_x not in data_dict or key_y not in data_dict:
         return
@@ -172,4 +178,4 @@ def update_plot(
 
     # Save the updated plot data
     plot_data.to_csv(plot_data_path, index=False)
-    #wandb_run.log({title: wandb.Image(plot_path)})
+    wandb_run.log({title: wandb.Image(plot_path)})

@@ -51,9 +51,9 @@ class TrainingArguments:
     training_accumulation_steps: int = field(
         default=1, metadata={"help": "Number of training steps to accumulate before performing backward pass."}
     )
-    save_steps: int = field(default=500_000, metadata={"help": "Save checkpoint every X updates steps."})
+    save_steps: int = field(default=2_000, metadata={"help": "Save checkpoint every X updates steps."})
     # TODO: Switch eval_steps back to 1_000 after debugging.
-    eval_steps: int = field(default=1_000, metadata={"help": "Run evaluation every X updates steps."})
+    eval_steps: int = field(default=500, metadata={"help": "Run evaluation every X updates steps."})
     dataloader_num_workers: int = field(
         default=20, metadata={"help": "Number of subprocesses to use for data loading."}
     )

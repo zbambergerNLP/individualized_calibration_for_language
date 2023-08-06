@@ -1,5 +1,6 @@
 import logging
 
+import accelerate
 import numpy as np
 from accelerate import Accelerator
 
@@ -24,25 +25,17 @@ import data
 from transformers import TrainingArguments, AutoTokenizer
 from plots import end_of_training_plots
 
-deepspeed_plugin = (
-
-)
-
-# accelerator = Accelerator(
-#     log_with="wandb",
-#     # Parameters for automatic precision and/or mixed precision training
-# )
-
 
 def main():
-
-    print("cuda is available: ", torch.cuda.is_available())
-
     # Parse arguments
     parser = transformers.HfArgumentParser(
         (flags.ModelArguments, flags.DataArguments, flags.TrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    accelerator = accelerate.Accelerator(
+        gradient_accumulation_steps=training_args.training_accumulation_steps,
+        log_with='wandb',
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
 
     # Establish determinism for reproducibility. Use provided seed
@@ -137,20 +130,24 @@ def main():
     optimizer = torch.optim.Adam(
         experiment_model.parameters(),
         lr=training_args.learning_rate)
-    """
-    scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer,
-    )
-    """
     total_steps = int(
             (len(train_dataset['train']) / training_args.per_device_train_batch_size) * training_args.num_train_epochs
     )
-    scheduler = get_linear_schedule_with_warmup(optimizer,
-                                    num_warmup_steps=int(training_args.warmup_ratio * total_steps),
-                                    num_training_steps=total_steps)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=int(training_args.warmup_ratio * total_steps),
+        num_training_steps=total_steps)
+
+    experiment_name = (
+        f'seed_{training_args.seed}_'
+        f'coefficient_{str(training_args.coefficient).replace(".", "_")}_'
+        f'lr_{str(training_args.learning_rate).replace(".", "_")}_'
+    )
+    output_dir = os.path.join(training_args.output_dir, experiment_name)
 
     # Create a trainer for the experiment model
     trainer = trainer2.CommentRegressorTrainer(
+        output_dir=output_dir,
         model=experiment_model,
         tokenizer=tokenizer,
         train_dataset=train_dataset['train'],
@@ -167,6 +164,7 @@ def main():
         training_accumulation_steps=training_args.training_accumulation_steps,
         validation_accumulation_steps=training_args.eval_accumulation_steps,
         eval_steps=training_args.eval_steps,
+        accelerator=accelerator,
     )
     trainer.train(
         epochs=training_args.num_train_epochs,
@@ -175,14 +173,20 @@ def main():
     # Evaluate the model on the test set
     test_metrics = trainer.eval(validation_loader=trainer.test_loader,
                                 validation_accumulation_steps=trainer.validation_accumulation_steps,
-                                with_wandb=False)
+                                with_wandb=True,
 
-    end_of_training_plots(eval_result=test_metrics,
-                          alpha=training_args.coefficient,
-                          data_title="",
-                          wandb_run=None) #add wandb?
+                                )
 
-    print("\n\nDone")
+    if accelerator.is_local_main_process:
+        end_of_training_plots(
+            eval_result=test_metrics,
+            alpha=training_args.coefficient,
+            data_title="",
+            wandb_run=accelerator.get_tracker("wandb"),
+        )
+
+    accelerator.print("\n\nDone")
+
 
 if __name__ == '__main__':
     main()
