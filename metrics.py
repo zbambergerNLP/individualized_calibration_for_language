@@ -63,23 +63,23 @@ class MetricManager:
 
     def create_all_metrics_plots(self):
         # Create a new figure for each metric and save it in the directory
-        for metric_name in self.metrics_names:
-            label_num = 0
-            plt.figure(figsize=(12, 6))
-            for key, metric_dict in self.metrics.items():
-                # Check if the key ends with the current metric
-                if key.endswith(metric_name):
-                    # If it does, plot the values with the key as the label
-                    plt.plot(metric_dict['steps'], metric_dict['values'], label=key, color=self.colors[label_num])
-                    label_num += 1
+        if self.accelerator.is_local_main_process:
+            for metric_name in self.metrics_names:
+                label_num = 0
+                plt.figure(figsize=(12, 6))
+                for key, metric_dict in self.metrics.items():
+                    # Check if the key ends with the current metric
+                    if key.endswith(metric_name):
+                        # If it does, plot the values with the key as the label
+                        plt.plot(metric_dict['steps'], metric_dict['values'], label=key, color=self.colors[label_num])
+                        label_num += 1
 
-            # Add a legend, title and save the figure
-            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            plt.title("{} (alpha = {})".format(metric_name, self.coefficient))
-            plt.tight_layout()  # Adjust the spacing around the plot
-            if self.accelerator.is_local_main_process:
+                # Add a legend, title and save the figure
+                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                plt.title("{} (alpha = {})".format(metric_name, self.coefficient))
+                plt.tight_layout()  # Adjust the spacing around the plot
                 plt.savefig(self.new_dir_name + "/" + metric_name + '.png')
-            plt.close()
+                plt.close()
 
     def save_metrics(self):
         # Save the metrics in a file in the directory

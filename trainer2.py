@@ -10,6 +10,7 @@ import typing
 import os
 import transformers
 from transformers.trainer_pt_utils import nested_concat, nested_numpify
+from transformers.trainer_utils import denumpify_detensorize
 
 import wandb
 from typing import List, Dict, Tuple, Optional, Union, Any
@@ -83,7 +84,7 @@ class CommentRegressorTrainer:
             )
         self.accelerator = accelerator
         # Create metric manager to save and plot the metrics
-        self.metric_manager = MetricManager(coefficient=coefficient, accelerator=accelerator)
+        # self.metric_manager = MetricManager(coefficient=coefficient, accelerator=accelerator)
         self.initial_learning_rate = optimizer.defaults.get('lr')
 
         self.tokenizer = tokenizer
@@ -260,8 +261,8 @@ class CommentRegressorTrainer:
                     if step % self.logging_steps == 0:
                         learning_rate = self.optimizer.param_groups[0]["lr"]
                         self.accelerator.print(
-                            f"Epoch: {total_loss} | "
-                            f"Step: {total_loss} | "
+                            f"Epoch: {epoch} | "
+                            f"Step: {self.training_step-1} | "
                             f"Loss: {total_loss.item():.3f} | "
                             f"CDF Loss: {cdf_loss.item():.3f} | "
                             f"NLL Loss: {nll_loss.item():.3f} | "
@@ -272,28 +273,29 @@ class CommentRegressorTrainer:
                                 "training_step": step,
                                 "training_loss": total_loss.item(),
                                 "learning_rate": learning_rate,
-                                "cdf_loss": cdf_loss.item(),
-                                "nll_loss": nll_loss.item(),
+                                "training_cdf_loss": cdf_loss.item(),
+                                "training_nll_loss": nll_loss.item(),
                             },
                             step=step,
                         )
-                        self.metric_manager.add_metric(step=self.training_step, metric_name="training_loss",
-                                                       metric_value=total_loss.item())
-                        self.metric_manager.add_metric(step=self.training_step, metric_name="cdf_loss",
-                                                       metric_value=cdf_loss.item())
-                        self.metric_manager.add_metric(step=self.training_step, metric_name="nll_loss",
-                                                       metric_value=nll_loss.item())
-                        self.metric_manager.add_metric(step=self.training_step, metric_name="lr",
-                                                       metric_value=learning_rate)
+                        # self.metric_manager.add_metric(step=self.training_step, metric_name="training_loss",
+                        #                                metric_value=total_loss.item())
+                        # self.metric_manager.add_metric(step=self.training_step, metric_name="training_cdf_loss",
+                        #                                metric_value=cdf_loss.item())
+                        # self.metric_manager.add_metric(step=self.training_step, metric_name="training_nll_loss",
+                        #                                metric_value=nll_loss.item())
+                        # self.metric_manager.add_metric(step=self.training_step, metric_name="lr",
+                        #                                metric_value=learning_rate)
 
                     if step % self.eval_steps == 0:
                         val_metrics = self.eval(self.validation_loader, self.validation_accumulation_steps)
+                        self.accelerator.print(f"Validation metrics: {val_metrics}")
                         self.accelerator.log(val_metrics, step=step)
-                        self.metric_manager.add_dict_metrics(step=self.training_step, metrics_dict=val_metrics)
-                        self.metric_manager.create_all_metrics_plots()
-                        stop_early = self._perform_early_stopping(val_metrics["loss"])
+                        # self.metric_manager.add_dict_metrics(step=self.training_step, metrics_dict=val_metrics)
+                        # self.metric_manager.create_all_metrics_plots()
+                        stop_early = self._perform_early_stopping(val_metrics["eval_loss"])
                         if stop_early:
-                            self.metric_manager.save_metrics()
+                            # self.metric_manager.save_metrics()
                             self.accelerator.end_training()
                             return
 
@@ -305,7 +307,7 @@ class CommentRegressorTrainer:
                         self.accelerator.print(f"Saving model to `{checkpoint_dir}`")
                         self.accelerator.save_state(checkpoint_dir)
 
-        self.metric_manager.save_metrics()
+        # self.metric_manager.save_metrics()
         self.accelerator.end_training()
 
     def eval(
@@ -324,14 +326,18 @@ class CommentRegressorTrainer:
         """
         self.model.eval()
 
-        all_losses = None                                           # type: Union[np.ndarray, None]
+        all_total_losses = None                                     # type: Union[np.ndarray, None]
+        all_cdf_losses = None                                       # type: Union[np.ndarray, None]
+        all_nll_losses = None                                       # type: Union[np.ndarray, None]
         all_groups = {}                                             # type: Dict[str, np.ndarray]
         all_means = None                                            # type: Union[np.ndarray, None]
         all_stddevs = None                                          # type: Union[np.ndarray, None]
         all_labels = None                                           # type: Union[np.ndarray, None]
         all_input_rs = None                                         # type: Union[np.ndarray, None]
 
-        losses_host = None                                          # type: Union[List[torch.Tensor], None]
+        total_losses_host = None                                    # type: Union[List[torch.Tensor], None]
+        cdf_losses_host = None                                      # type: Union[List[torch.Tensor], None]
+        nll_losses_host = None                                      # type: Union[List[torch.Tensor], None]
         groups_host = {}                                            # type: Dict[str, Union[List[torch.Tensor]]]
         means_host = None                                           # type: Union[List[torch.Tensor], None]
         stddevs_host = None                                         # type: Union[List[torch.Tensor], None]
@@ -358,16 +364,27 @@ class CommentRegressorTrainer:
             with torch.no_grad():
                 model_outputs = self.model(**model_inputs)
             mean_pred, std_pred = model_outputs
-            loss = self.compute_loss(
+            cdf_loss, nll_loss, total_loss = self.compute_loss(
                 input_r=batch["input_r"],
                 mean_pred=mean_pred,
                 std_pred=std_pred,
                 labels=batch["labels"],
             )
 
-            if loss is not None:
-                losses = self.accelerator.gather_for_metrics(loss.repeat(self.validation_batch_size))
-                losses_host = losses if losses_host is None else nested_concat(losses_host, losses)
+            if total_loss is not None:
+                total_losses = self.accelerator.gather_for_metrics(total_loss.repeat(self.validation_batch_size))
+                total_losses_host = (
+                    total_losses if total_losses_host is None
+                    else nested_concat(total_losses_host, total_losses)
+                )
+
+            if cdf_loss is not None:
+                cdf_losses = self.accelerator.gather_for_metrics(cdf_loss.repeat(self.validation_batch_size))
+                cdf_losses_host = cdf_losses if cdf_losses_host is None else nested_concat(cdf_losses_host, cdf_losses)
+
+            if nll_loss is not None:
+                nll_losses = self.accelerator.gather_for_metrics(nll_loss.repeat(self.validation_batch_size))
+                nll_losses_host = nll_losses if nll_losses_host is None else nested_concat(nll_losses_host, nll_losses)
 
             if mean_pred is not None:
                 mean_preds = self.accelerator.gather_for_metrics(mean_pred)
@@ -394,9 +411,26 @@ class CommentRegressorTrainer:
                         groups_host[group] = nested_concat(groups_host[group], groups[group])
 
             if step % validation_accumulation_steps == 0 and self.accelerator.sync_gradients:
-                if losses_host is not None:
-                    losses = nested_numpify(losses_host)
-                    all_losses = losses if all_losses is None else np.concatenate((all_losses, losses), axis=0)
+                if total_losses_host is not None:
+                    total_losses = nested_numpify(total_losses_host)
+                    all_losses = (
+                        total_losses if all_total_losses is None
+                        else np.concatenate((all_total_losses, total_losses), axis=0)
+                    )
+
+                if cdf_losses_host is not None:
+                    cdf_losses = nested_numpify(cdf_losses_host)
+                    all_cdf_losses = (
+                        cdf_losses if all_cdf_losses is None
+                        else np.concatenate((all_cdf_losses, cdf_losses), axis=0)
+                    )
+
+                if nll_losses_host is not None:
+                    nll_losses = nested_numpify(nll_losses_host)
+                    all_nll_losses = (
+                        nll_losses if all_nll_losses is None
+                        else np.concatenate((all_nll_losses, nll_losses), axis=0)
+                    )
 
                 if means_host is not None:
                     means = nested_numpify(means_host)
@@ -424,16 +458,31 @@ class CommentRegressorTrainer:
                             )
                         )
 
-                losses_host = None
+                total_losses_host = None
+                cdf_losses_host = None
+                nll_losses_host = None
                 means_host = None
                 stddevs_host = None
                 labels_host = None
                 input_rs_host = None
                 groups_host = {}
 
-        if losses_host is not None:
-            losses = nested_numpify(losses_host)
-            all_losses = losses if all_losses is None else np.concatenate((all_losses, losses), axis=0)
+        if total_losses_host is not None:
+            total_losses = nested_numpify(total_losses_host)
+            all_total_losses = (
+                total_losses if all_total_losses is None
+                else np.concatenate(
+                    (all_total_losses, total_losses),
+                    axis=0)
+            )
+
+        if cdf_losses_host is not None:
+            cdf_losses = nested_numpify(cdf_losses_host)
+            all_cdf_losses = cdf_losses if all_cdf_losses is None else np.concatenate((all_cdf_losses, cdf_losses), axis=0)
+
+        if nll_losses_host is not None:
+            nll_losses = nested_numpify(nll_losses_host)
+            all_nll_losses = nll_losses if all_nll_losses is None else np.concatenate((all_nll_losses, nll_losses), axis=0)
 
         if means_host is not None:
             means = nested_numpify(means_host)
@@ -469,17 +518,39 @@ class CommentRegressorTrainer:
 
         if self.accelerator.is_main_process:
             self.accelerator.print(
-                f"{self.training_step-1} - Validation loss: {np.mean(all_losses):.4f}"
+                f"{self.training_step-1} - Validation\n:"
+                f"\tTotal loss: {np.mean(all_total_losses):.4f}\n"
+                f"\tCDF loss: {np.mean(all_cdf_losses):.4f}\n"
+                f"\tNLL loss: {np.mean(all_nll_losses):.4f}"
             )
 
+        metric_eval = {}
         # Creates the metrics
-        metric_eval = compute_metrics(
-            eval_pred=comment_reg_pred,
-            coefficient=self.coefficient,
-            prefix="eval",
-        )
-        metric_eval["eval_loss"] = all_losses.mean().item()
-        self.accelerator.log(metric_eval, step=self.training_step - 1)
+        if (
+                all_means is not None and
+                all_stddevs is not None and
+                all_labels is not None
+        ):
+            metric_eval = compute_metrics(
+                eval_pred=comment_reg_pred,
+                coefficient=self.coefficient,
+                prefix="eval",
+            )
+            self.accelerator.print(metric_eval)
+            metric_eval["step"] = self.training_step - 1
+            metric_eval["eval_loss"] = all_total_losses.mean().item()
+            metric_eval["eval_cdf_loss"] = all_cdf_losses.mean().item()
+            metric_eval["eval_nll_loss"] = all_nll_losses.mean().item()
+            self.accelerator.log(metric_eval, step=self.training_step - 1)
+
+        metrics = denumpify_detensorize(metric_eval)
+        if all_total_losses is not None:
+            metrics[f"eval_loss"] = all_total_losses.mean().item()
+        if all_cdf_losses is not None:
+            metrics[f"eval_cdf_loss"] = all_cdf_losses.mean().item()
+        if all_nll_losses is not None:
+            metrics[f"eval_nll_loss"] = all_nll_losses.mean().item()
+
         return metric_eval
 
     def compute_loss(
