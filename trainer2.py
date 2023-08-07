@@ -263,10 +263,10 @@ class CommentRegressorTrainer:
                         self.accelerator.print(
                             f"Epoch: {epoch} | "
                             f"Step: {self.training_step-1} | "
-                            f"Loss: {total_loss.item():.3f} | "
-                            f"CDF Loss: {cdf_loss.item():.3f} | "
-                            f"NLL Loss: {nll_loss.item():.3f} | "
-                            f"LR: {self.optimizer.param_groups[0]['lr']:.6f}"
+                            f"Train Loss: {total_loss.item():.3f} | "
+                            f"Train CDF Loss: {cdf_loss.item():.3f} | "
+                            f"Train NLL Loss: {nll_loss.item():.3f} | "
+                            f"Train Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}"
                         )
                         self.accelerator.log(
                             {
@@ -289,7 +289,6 @@ class CommentRegressorTrainer:
 
                     if step % self.eval_steps == 0:
                         val_metrics = self.eval(self.validation_loader, self.validation_accumulation_steps)
-                        self.accelerator.print(f"Validation metrics: {val_metrics}")
                         self.accelerator.log(val_metrics, step=step)
                         # self.metric_manager.add_dict_metrics(step=self.training_step, metrics_dict=val_metrics)
                         # self.metric_manager.create_all_metrics_plots()
@@ -315,7 +314,7 @@ class CommentRegressorTrainer:
             validation_loader: torch.utils.data.DataLoader,
             validation_accumulation_steps: int,
             with_wandb: bool = False,
-    ):
+    ) -> Dict[str, float]:
         """
         Evaluate the model on the validation set.
 
@@ -509,34 +508,27 @@ class CommentRegressorTrainer:
                         group_value,
                     )
                 )
-        comment_reg_pred = CommentRegressorPrediction(
-            means=all_means,
-            stddevs=all_stddevs,
-            input_r=all_input_rs,
-            label_ids=all_labels,
-            groups=all_groups)
-
-        if self.accelerator.is_main_process:
-            self.accelerator.print(
-                f"{self.training_step-1} - Validation\n:"
-                f"\tTotal loss: {np.mean(all_total_losses):.4f}\n"
-                f"\tCDF loss: {np.mean(all_cdf_losses):.4f}\n"
-                f"\tNLL loss: {np.mean(all_nll_losses):.4f}"
-            )
 
         metric_eval = {}
         # Creates the metrics
         if (
                 all_means is not None and
                 all_stddevs is not None and
-                all_labels is not None
+                all_labels is not None and
+                all_input_rs is not None and
+                all_groups is not None
         ):
+            comment_reg_pred = CommentRegressorPrediction(
+                means=all_means,
+                stddevs=all_stddevs,
+                input_r=all_input_rs,
+                label_ids=all_labels,
+                groups=all_groups)
             metric_eval = compute_metrics(
                 eval_pred=comment_reg_pred,
                 coefficient=self.coefficient,
                 prefix="eval",
             )
-            self.accelerator.print(metric_eval)
             metric_eval["step"] = self.training_step - 1
             metric_eval["eval_loss"] = all_total_losses.mean().item()
             metric_eval["eval_cdf_loss"] = all_cdf_losses.mean().item()
@@ -544,14 +536,14 @@ class CommentRegressorTrainer:
             self.accelerator.log(metric_eval, step=self.training_step - 1)
 
         metrics = denumpify_detensorize(metric_eval)
-        if all_total_losses is not None:
-            metrics[f"eval_loss"] = all_total_losses.mean().item()
-        if all_cdf_losses is not None:
-            metrics[f"eval_cdf_loss"] = all_cdf_losses.mean().item()
-        if all_nll_losses is not None:
-            metrics[f"eval_nll_loss"] = all_nll_losses.mean().item()
-
-        return metric_eval
+        self.accelerator.print(
+            f"Step: {metrics['step']} | "
+            f"Eval Loss: {metrics['eval_loss']:.3f} | "
+            f"Eval CDF Loss: {metrics['eval_cdf_loss']:.3f} | "
+            f"Eval NLL Loss: {metrics['eval_nll_loss']:.3f} | "
+            f"Eval_LR: {self.optimizer.param_groups[0]['lr']:.6f}"
+        )
+        return metrics
 
     def compute_loss(
             self,
