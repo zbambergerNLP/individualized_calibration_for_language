@@ -54,7 +54,6 @@ class TrainingArguments:
         default=1, metadata={"help": "Number of training steps to accumulate before performing backward pass."}
     )
     save_steps: int = field(default=2_000, metadata={"help": "Save checkpoint every X updates steps."})
-    # TODO: Switch eval_steps back to 1_000 after debugging.
     eval_steps: int = field(default=500, metadata={"help": "Run evaluation every X updates steps."})
     dataloader_num_workers: int = field(
         default=20, metadata={"help": "Number of subprocesses to use for data loading."}
@@ -90,6 +89,11 @@ class ModelArguments:
     tokenizer_batch_size: int = field(
         default=16, metadata={"help": "The batch size used when tokenizing the dataset."}
     )
+    input_r_dim: int = field(
+        default=1, metadata={"help": "The dimension of the input r."}
+    )
+
+
 
 
 @dataclass
@@ -123,12 +127,15 @@ class DataArguments:
         default='data/test_data.csv',
         metadata={"help": "Path to testing data file"},
     )
+    r_input_upper_bound: Optional[float] = field(
+        default=1.0, metadata={"help": "The upper bound of the r input range. So it will be sampled from [0,bound]."}
+    )
     sample_train_examples: Optional[int] = field(
         default=None,
         metadata={"help": "The number of training examples to use. If None, use all examples."},
     )
     sample_validation_examples: Optional[int] = field(
-        default=None,  # TODO: Set this to None once we're done debugging.
+        default=None,
         metadata={"help": "The number of validation examples to use. If None, use all examples."},
     )
     sample_test_examples: Optional[int] = field(

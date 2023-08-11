@@ -64,9 +64,7 @@ def end_of_training_plots(
         eval_result[metric + '_best_group'] =  min(cuur_list)
 
     # Metrics that bigger is better
-    for metric in ['Accuracy', 'F1', 'TPR',
-                   # 'BPSN_AUC', 'BNSP_AUC',
-                   ]:
+    for metric in ['Accuracy', 'F1', 'TPR', 'Precision', 'Recall']:
         curr_list = [value for key, value in eval_result.items()
                 if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
         if len(curr_list) == 0:
@@ -75,9 +73,7 @@ def end_of_training_plots(
         eval_result[metric + '_best_group'] = max(curr_list)
 
     # Finds the mean metric value between all the groups
-    for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'Accuracy', 'F1', 'TPR', 'FPR',
-                   # 'BPSN_AUC', 'BNSP_AUC',
-                   ]:
+    for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'Accuracy', 'F1', 'TPR', 'FPR', 'Precision', 'Recall']:
         curr_list = [value for key, value in eval_result.items()
                 if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
         if len(curr_list) == 0:
@@ -103,6 +99,10 @@ def end_of_training_plots(
                 wandb_run=wandb_run)
     update_plot(eval_result, key_x='FPR_worst_group', key_y='FPR', alpha=alpha, data_title=data_title,
                 wandb_run=wandb_run)
+    update_plot(eval_result, key_x='Recall_worst_group', key_y='Recall', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='Precision_worst_group', key_y='Precision', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
 
     # Classification metrics graphs (best group)
     # update_plot(eval_result, key_x='BPSN_AUC_best_group', key_y='BPSN_AUC_worst_group', alpha=alpha, data_title=data_title,
@@ -116,6 +116,10 @@ def end_of_training_plots(
     update_plot(eval_result, key_x='TPR_best_group', key_y='TPR_worst_group', alpha=alpha, data_title=data_title,
                 wandb_run=wandb_run)
     update_plot(eval_result, key_x='FPR_best_group', key_y='FPR_worst_group', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='Recall_worst_group', key_y='Recall_worst_group', alpha=alpha, data_title=data_title,
+                wandb_run=wandb_run)
+    update_plot(eval_result, key_x='Precision_worst_group', key_y='Precision_worst_group', alpha=alpha, data_title=data_title,
                 wandb_run=wandb_run)
 
 
@@ -167,8 +171,9 @@ def update_plot(
     if data_title == "":
         title = "{} vs. {}".format(key_x, key_y)
     else:
-        title = "{} vs. {} - {}".format(key_x, key_y, data_title)
-    plt.title(title)
+        title = "{} vs. {} - ({})".format(key_x, key_y, data_title)
+    plt.title(title, fontsize=9)
+    plt.tick_params(axis='both', which='major', labelsize=7)  # Change the font size of the x-axis values
 
     # Add a colorbar
     plt.colorbar(sc, label='alpha')

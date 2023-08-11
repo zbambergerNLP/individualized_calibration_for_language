@@ -148,15 +148,17 @@ def compute_metrics(
         if group_mask.sum() == 0:
             # If there are no samples in the group, skip it.
             continue
+        group_mask_balanced, N = create_balanced_mask(target_labels[group_mask])
+        if N < 50: # There isn't enough data to compute the metrics
+            continue
         tmp_metrics_dict[group_name] = compute_metrics_from_pred(
-            input_r=input_r,
-            mean=means,
-            stddev=stddevs,
-            pred_values=pred_values,
-            pred_labels=pred_labels,
-            target_labels=target_labels,
-            target=target,
-            group_mask=group_mask,
+            input_r=input_r[group_mask][group_mask_balanced],
+            mean=means[group_mask][group_mask_balanced],
+            stddev=stddevs[group_mask][group_mask_balanced],
+            pred_values=pred_values[group_mask][group_mask_balanced],
+            pred_labels=pred_labels[group_mask][group_mask_balanced],
+            target_labels=target_labels[group_mask][group_mask_balanced],
+            target=target[group_mask][group_mask_balanced],
             coefficient=coefficient,
         )
 
@@ -182,12 +184,39 @@ def compute_metrics(
             pred_labels=pred_labels,
             target_labels=target_labels,
             target=target,
-            group_mask=torch.ones_like(target, dtype=torch.bool),
             full_dataset=True,
             coefficient=coefficient)
     )
 
     return metrics_dict
+
+
+def create_balanced_mask(target_labels : torch.Tensor) -> torch.Tensor:
+    """
+    Creates a mask that is balanced between the two classes (0 and 1) for the given target values.
+    :param target_labels:
+    :return: a balanced mask
+    """
+
+    # Count the number of zeros and ones
+    count_zeros = (target_labels == 0).sum().item()
+    count_ones = (target_labels == 1).sum().item()
+
+    # Determine the number of elements to take from each group
+    N = min(count_zeros, count_ones)
+
+    # Get the indices of the first N zeros and N ones
+    zero_indices = torch.where(target_labels == 0)[0][:N]
+    one_indices = torch.where(target_labels == 1)[0][:N]
+
+    # Initialize the mask with False values
+    group_mask = torch.zeros_like(target_labels, dtype=torch.bool)
+
+    # Set the mask to True for the first N zeros and N ones
+    group_mask[zero_indices] = True
+    group_mask[one_indices] = True
+
+    return group_mask, N
 
 
 def compute_metrics_from_pred(
@@ -199,7 +228,6 @@ def compute_metrics_from_pred(
         pred_labels: torch.Tensor = None,
         target_labels: torch.Tensor = None,
         target: torch.Tensor = None,
-        group_mask: torch.Tensor = None,
         full_dataset: bool = False,
 ) -> dict[str, float]:
     """
@@ -214,21 +242,20 @@ def compute_metrics_from_pred(
     :param pred_labels: The predicted labels for each sample in the evaluation set.
     :param target_labels: The target labels for each sample in the evaluation set.
     :param target: The target random variable for each sample in the evaluation set.
-    :param group_mask: A mask that determines which samples belong to the group.
     :param full_dataset: Whether to compute the metrics for the full dataset.
     :return: A dictionary of metrics. The keys are the metric names and the values are the metric values.
     """
 
     # Calculate the losses
     cdf = (
-            0.5 * (1.0 + torch.erf((target[group_mask] - mean[group_mask]) / stddev[group_mask] / math.sqrt(2)))
+            0.5 * (1.0 + torch.erf((target - mean) / stddev / math.sqrt(2)))
     )
-    loss_cdf = torch.abs(cdf - input_r[group_mask]).mean()
-    loss_stddev = stddev[group_mask].mean()
+    loss_cdf = torch.abs(cdf - input_r).mean()
+    loss_stddev = stddev.mean()
     loss_nll = (
-            torch.log(stddev[group_mask]) +
+            torch.log(stddev) +
             math.log(2 * math.pi) / 2.0 +
-            (((target[group_mask] - mean[group_mask]) / stddev[group_mask]) ** 2 / 2.0)
+            (((target - mean) / stddev) ** 2 / 2.0)
     )
     loss_nll = loss_nll.mean()
     loss = (1 - coefficient) * loss_cdf + coefficient * loss_nll
@@ -236,7 +263,7 @@ def compute_metrics_from_pred(
     # TODO: Consider reporting when denominators are 0.
 
     # Calculate the average TPR, FPR, precision, F1 and accuracy
-    tn, fp, fn, tp = confusion_matrix(target_labels[group_mask], pred_labels[group_mask]).ravel()
+    tn, fp, fn, tp = confusion_matrix(target_labels, pred_labels).ravel()
 
     # False Positive Rate - The proportion of negative instances that are incorrectly classified as positive
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0

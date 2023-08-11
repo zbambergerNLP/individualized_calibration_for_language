@@ -24,6 +24,7 @@ import data
 #from trainer2 import CommentRegressorTrainer
 from transformers import TrainingArguments, AutoTokenizer
 from plots import end_of_training_plots
+from average_calibration import perform_average_calibration
 
 
 def main():
@@ -124,6 +125,7 @@ def main():
         mlp_hidden=model_args.mlp_hidden,
         drop_prob=model_args.mlp_dropout,
         text_encoder_model_name=model_args.model_name_or_path,
+        input_r_dim=model_args.input_r_dim,
         # dtype=torch.float16  # Use float16 for faster training. TODO: Make this a flag.
     )
 
@@ -163,6 +165,7 @@ def main():
         test_batch_size=training_args.per_device_eval_batch_size,
         training_accumulation_steps=training_args.training_accumulation_steps,
         validation_accumulation_steps=training_args.eval_accumulation_steps,
+        r_input_upper_bound=data_args.r_input_upper_bound,
         eval_steps=training_args.eval_steps,
         patience=training_args.patience,
         accelerator=accelerator,
@@ -178,19 +181,37 @@ def main():
     test_metrics = trainer.eval(validation_loader=trainer.test_loader,
                                 validation_accumulation_steps=trainer.validation_accumulation_steps,
                                 with_wandb=True,
-
                                 )
 
     if accelerator.is_local_main_process:
         end_of_training_plots(
             eval_result=test_metrics,
             alpha=training_args.coefficient,
-            data_title="",
+            data_title="r in [0, {}], r dim = {}".
+            format(data_args.r_input_upper_bound, model_args.input_r_dim),
             wandb_run=accelerator.get_tracker("wandb"),
         )
 
-    accelerator.print("\n\nDone")
+        # Perform average calibration
+        calibrated_comment_regressor = perform_average_calibration(
+            comment_regressor=trainer.model,
+            calibration_dataloader=trainer.calibration_loader
+        )
 
+        # Evaluate the calibrated model on the test set
+        trainer.model = calibrated_comment_regressor.to(trainer.accelerator.device)
+        test_metrics_calib = trainer.eval(validation_loader=trainer.validation_loader,
+                                          validation_accumulation_steps=trainer.validation_accumulation_steps,
+                                          with_wandb=False)
+
+        end_of_training_plots(eval_result=test_metrics_calib,
+                              alpha=training_args.coefficient,
+                              data_title="r in [0, {}], r dim = {}, calibrated".
+                              format(data_args.r_input_upper_bound, model_args.input_r_dim),
+                              wandb_run=None)
+
+
+    print("\n\nDone")
 
 if __name__ == '__main__':
     main()
