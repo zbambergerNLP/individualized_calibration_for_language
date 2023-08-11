@@ -13,6 +13,7 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
     def __init__(
             self,
             tokenizer,
+            r_input_upper_bound: float = 1.0,
             seed: int = 42,
             max_length=None,
     ):
@@ -20,9 +21,11 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
 
         Args:
             tokenizer: The tokenizer to use.
+            r_input_upper_bound: The upper bound for the random r input.
             max_length: The maximum length of the input text.
         """
         self.tokenizer = tokenizer
+        self.r_input_upper_bound = r_input_upper_bound
         self.max_length = max_length
 
     def __call__(
@@ -41,12 +44,11 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
         """
         if return_tensors is None:
             return_tensors = self.return_tensors
-        # TODO: Investigate here.
         result = transformers.default_data_collator(features, return_tensors)
         input_r = torch.rand(
             result.get('input_ids').shape[0],
             1,
-            device=result.get('input_ids').device)
+            device=result.get('input_ids').device) * self.r_input_upper_bound
         result['input_r'] = input_r
         for group in data_preprocessing.GROUP_LIST:
             group_values = []

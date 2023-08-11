@@ -169,8 +169,11 @@ if __name__ == "__main__":
 
     train_data = pd.concat([train_data_with_nulls, train_data_without_nulls])
     calib_data = pd.concat([calib_data_with_nulls, calib_data_without_nulls])
-    eval_data = pd.concat([eval_data_with_nulls, eval_data_without_nulls])
-    test_data = pd.concat([test_data_with_nulls, test_data_without_nulls])
+    #eval_data = pd.concat([eval_data_with_nulls, eval_data_without_nulls])
+    #test_data = pd.concat([test_data_with_nulls, test_data_without_nulls])
+
+    eval_data = eval_data_without_nulls
+    test_data = test_data_without_nulls
 
     train_data = shuffle(train_data, random_state=seed)
 

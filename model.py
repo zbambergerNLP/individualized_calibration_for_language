@@ -33,9 +33,11 @@ class CommentRegressor(nn.Module):
             mlp_hidden: int = 100,
             drop_prob: float = 0.5,
             text_encoder_model_name: str = "textattack/bert-base-uncased-yelp-polarity",
+            input_r_dim: int = 1,
             dtype=torch.float32,
     ):
         super(CommentRegressor, self).__init__()
+        self.input_r_dim = input_r_dim
         self.dtype = dtype
         self.mlp_hidden = mlp_hidden
         self.drop_prob = drop_prob
@@ -47,25 +49,25 @@ class CommentRegressor(nn.Module):
         ).bert
 
         # Construct the MLP for predicting the mean and standard deviation following the text encoder.
-        self.fc1 = nn.Linear(self.bert.config.hidden_size + 1, self.mlp_hidden, dtype=dtype)
-        self.fc2 = nn.Linear(self.mlp_hidden + 1, self.mlp_hidden, dtype=dtype)
+        self.fc1 = nn.Linear(self.bert.config.hidden_size + self.input_r_dim, self.mlp_hidden, dtype=dtype)
+        self.fc2 = nn.Linear(self.mlp_hidden + self.input_r_dim, self.mlp_hidden, dtype=dtype)
         self.drop = nn.Dropout(drop_prob)
         self.fc3 = nn.Linear(self.mlp_hidden, 2, dtype=dtype)
 
     def forward(
             self,
             input_ids: torch.Tensor,  # Tensor of input token ids of shape [batch_size, max_seq_len, vocab_size]
-            attention_mask: torch.Tensor = None,  # Tensor of attention masks of shape [batch_size, max_seq_len]
-            input_r: torch.Tensor = None,  # Tensor of random values of shape [batch_size, 1]
+            attention_mask: torch.Tensor,  # Tensor of attention masks of shape [batch_size, max_seq_len]
+            input_r: torch.Tensor,  # Tensor of random values of shape [batch_size, 1]
     ):
         output = self.bert(input_ids=input_ids, attention_mask=attention_mask).pooler_output
         output = output.to(self.dtype)
         input_r = input_r.to(self.dtype)
 
-        h = torch.cat([output, input_r], dim=1)
+        h = torch.cat([output, input_r.repeat(1, self.input_r_dim)], dim=1)
         h = self.fc1(h)
         h = F.leaky_relu(h)
-        h = torch.cat([h, input_r], dim=1)
+        h = torch.cat([h, input_r.repeat(1, self.input_r_dim)], dim=1)
         h = self.fc2(h)
         h = F.leaky_relu(h)
         h = self.drop(h)
@@ -81,23 +83,22 @@ class CalibrationLayer(nn.Module):
     Calibration layer for a CommentRegressor.
     """
 
-    def __init__(self):
+    def __init__(self, dtype=torch.float32):
         super(CalibrationLayer, self).__init__()
-
-        self.a = nn.Parameter(torch.Tensor([1]))
-        self.b = nn.Parameter(torch.Tensor([0]))
-        self.c = nn.Parameter(torch.Tensor([0]))
-        self.d = nn.Parameter(torch.Tensor([1]))
+        self.fc1 = nn.Linear(2, 16, dtype=dtype)
+        self.fc2 = nn.Linear(16, 2, dtype=dtype)
 
     def forward(
             self,
             mean: torch.Tensor,
             std: torch.Tensor,
     ):
-        calibrated_mean = self.a * mean + self.b * std
-        calibrated_std = self.c * mean + self.d * std
+        h = torch.stack([mean, std], dim=1)
+        out = self.fc2(F.relu(self.fc1(h)))
+        mean = out[:, 0]
+        stddev = torch.sigmoid(out[:, 1]) * 5.0 + 0.01
 
-        return calibrated_mean, torch.abs(calibrated_std)
+        return mean, stddev
 
 
 class CalibratedCommentRegressor(nn.Module):
@@ -111,7 +112,7 @@ class CalibratedCommentRegressor(nn.Module):
         super(CalibratedCommentRegressor, self).__init__()
 
         self.comment_regressor = comment_regressor
-        self.calibration_layer = CalibrationLayer()
+        self.calibration_layer = CalibrationLayer(dtype=comment_regressor.dtype)
 
     def forward(
             self,
