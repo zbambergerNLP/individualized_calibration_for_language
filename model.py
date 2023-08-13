@@ -1,13 +1,10 @@
 import typing
 
 import numpy as np
-from sklearn.isotonic import IsotonicRegression
-import math
-
 import torch
 from torch import nn
 import torch.nn.functional as F
-from transformers.models.bert.modeling_bert import BertForSequenceClassification
+from transformers.models.bert.modeling_bert import BertForSequenceClassification, BertModel
 
 
 class CommentRegressorPrediction(typing.NamedTuple):
@@ -44,6 +41,7 @@ class CommentRegressor(nn.Module):
 
         # Extract the text encoder from the pretrained model for text classification.
         # TODO: Change verbosity so that loading BERT does not print a wall of text.
+        # TODO: Change BERT model to BertModel as opposed to BertForSequenceClassification to avoid removing head.
         self.bert = BertForSequenceClassification.from_pretrained(
             text_encoder_model_name,
         ).bert
@@ -103,12 +101,22 @@ class CalibrationLayer(nn.Module):
 
 class CalibratedCommentRegressor(nn.Module):
     """
-    A trained model for predicting the mean and standard deviation of a Gaussian distribution, and on top a calibration layer.
+    A model for predicting the mean and standard deviation of a Gaussian distribution, and on top a calibration layer.
+
+    The calibration layer is a simple MLP. The output units are the mean and standard deviation of the Gaussian.
     """
 
     def __init__(
             self,
             comment_regressor: CommentRegressor):
+        """Initializes the model.
+
+        Add a calibration layer on top of the CommentRegressor model. This calibration layer is a simple MLP, and
+        performs "average calibration."
+
+        Args:
+            comment_regressor: The CommentRegressor model to use for predicting the mean and standard deviation.
+        """
         super(CalibratedCommentRegressor, self).__init__()
 
         self.comment_regressor = comment_regressor
@@ -119,7 +127,14 @@ class CalibratedCommentRegressor(nn.Module):
             input_ids: torch.Tensor,  # Tensor of input token ids of shape [batch_size, max_seq_len, vocab_size]
             attention_mask: torch.Tensor = None,  # Tensor of attention masks of shape [batch_size, max_seq_len]
             input_r: torch.Tensor = None,  # Tensor of random values of shape [batch_size, 1]
-        ):
+    ):
+        """Predicts the mean and standard deviation of a Gaussian distribution for each sample in the batch.
+
+        Args:
+            input_ids: Tensor of input token ids of shape [batch_size, max_seq_len]. The input IDs are valid entries
+                in the vocabulary of the text encoder.
+            attention_mask: Tensor of attention masks of shape [batch_size, max_seq_len]
+            input_r: Tensor of random values of shape [batch_size, 1]
+        """
         mean, stddev = self.comment_regressor(input_ids, attention_mask, input_r)
         return self.calibration_layer(mean, stddev)
-

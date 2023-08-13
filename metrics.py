@@ -3,6 +3,8 @@ import os
 
 import accelerate
 import torch
+import typing
+
 import model as individualized_calibration_model
 from sklearn.metrics import confusion_matrix, roc_auc_score
 
@@ -26,7 +28,6 @@ class MetricManager:
         self.metrics_names = ['loss', 'loss_cdf', 'loss_stddev', 'loss_nll', 'Recall', 'FPR', 'Precision', 'F1',
                               'Accuracy', 'BPSN_AUC', 'BNSP_AUC', 'lr']
 
-
         # Opens a dir to save the metrics and the plots, with the name "exp{}_coef_<>"
         self.metric_dir_path = "./metrics"
         os.makedirs(self.metric_dir_path, exist_ok=True)
@@ -49,11 +50,33 @@ class MetricManager:
         if accelerator.is_local_main_process:
             os.mkdir(self.new_dir_name)
 
-    def add_dict_metrics(self, step, metrics_dict):
+    def add_dict_metrics(
+            self,
+            step: int,
+            metrics_dict: typing.Dict[str, float]
+    ):
+        """Add a dictionary of metrics to the metrics dictionary.
+
+        Args:
+            step: The current step.
+            metrics_dict: A dictionary containing the metrics to add.
+        """
         for metric_name, metric_value in metrics_dict.items():
             self.add_metric(step, metric_name, metric_value)
 
-    def add_metric(self, step, metric_name, metric_value):
+    def add_metric(
+            self,
+            step: int,
+            metric_name: str,
+            metric_value: float,
+    ):
+        """Add a metric to the metrics dictionary.
+
+        Args:
+            step: The current step.
+            metric_name: The name of the metric.
+            metric_value: The value of the metric.
+        """
         if metric_name not in self.metrics.keys():
             self.metrics[metric_name] = {}
             self.metrics[metric_name]['steps'] = []
@@ -62,6 +85,7 @@ class MetricManager:
         self.metrics[metric_name]['values'].append(metric_value)
 
     def create_all_metrics_plots(self):
+        """Create a plot for each metric and save it in the directory."""
         # Create a new figure for each metric and save it in the directory
         if self.accelerator.is_local_main_process:
             for metric_name in self.metrics_names:
@@ -82,6 +106,7 @@ class MetricManager:
                 plt.close()
 
     def save_metrics(self):
+        """Save the metrics in a file in the directory."""
         # Save the metrics in a file in the directory
         if self.accelerator.is_local_main_process:
             with open(os.path.join(self.new_dir_name, 'metrics.pkl'), 'wb') as fp:
@@ -148,8 +173,8 @@ def compute_metrics(
         if group_mask.sum() == 0:
             # If there are no samples in the group, skip it.
             continue
-        group_mask_balanced, N = create_balanced_mask(target_labels[group_mask])
-        if N < 50: # There isn't enough data to compute the metrics
+        group_mask_balanced, group_size = create_balanced_mask(target_labels[group_mask])
+        if group_size < 50:  # There isn't enough data to compute the metrics
             continue
         tmp_metrics_dict[group_name] = compute_metrics_from_pred(
             input_r=input_r[group_mask][group_mask_balanced],
@@ -191,11 +216,14 @@ def compute_metrics(
     return metrics_dict
 
 
-def create_balanced_mask(target_labels : torch.Tensor) -> torch.Tensor:
+def create_balanced_mask(
+        target_labels: torch.Tensor,
+) -> typing.Tuple[torch.Tensor, int]:
     """
     Creates a mask that is balanced between the two classes (0 and 1) for the given target values.
-    :param target_labels:
-    :return: a balanced mask
+
+    :param target_labels: The target labels. Should be a tensor of 0s and 1s depicting the class of each example.
+    :return: a balanced mask and the number of elements in the mask.
     """
 
     # Count the number of zeros and ones
@@ -203,11 +231,11 @@ def create_balanced_mask(target_labels : torch.Tensor) -> torch.Tensor:
     count_ones = (target_labels == 1).sum().item()
 
     # Determine the number of elements to take from each group
-    N = min(count_zeros, count_ones)
+    group_size = min(count_zeros, count_ones)
 
     # Get the indices of the first N zeros and N ones
-    zero_indices = torch.where(target_labels == 0)[0][:N]
-    one_indices = torch.where(target_labels == 1)[0][:N]
+    zero_indices = torch.where(target_labels == 0)[0][:group_size]
+    one_indices = torch.where(target_labels == 1)[0][:group_size]
 
     # Initialize the mask with False values
     group_mask = torch.zeros_like(target_labels, dtype=torch.bool)
@@ -216,7 +244,7 @@ def create_balanced_mask(target_labels : torch.Tensor) -> torch.Tensor:
     group_mask[zero_indices] = True
     group_mask[one_indices] = True
 
-    return group_mask, N
+    return group_mask, group_size
 
 
 def compute_metrics_from_pred(
@@ -233,15 +261,22 @@ def compute_metrics_from_pred(
     """
     Compute metrics for the evaluation predictions (e.g., TPR, FPR, AUC, precision, recall, F1).
 
+    :param coefficient: The coefficient to use for balancing between the fairness oriented loss and the
+        performance/accuracy oriented loss.
     :param input_r: The inputted random variable for each sample in the evaluation set.
         A tensor of shape (num_samples,) who's values are in the range [0, 1].
     :param mean: The predicted means of the Gaussian distribution for each sample in the evaluation set.
         A tensor of shape (num_samples,) who's values are in the range [0, 1].
     :param stddev: The predicted standard deviations of the Gaussian distribution for each sample in the evaluation set.
         A tensor of shape (num_samples,).
-    :param pred_labels: The predicted labels for each sample in the evaluation set.
-    :param target_labels: The target labels for each sample in the evaluation set.
-    :param target: The target random variable for each sample in the evaluation set.
+    :param pred_values: The predicted values for each sample in the evaluation set. This is a scalar in the range
+        [0, 1].
+    :param pred_labels: The predicted labels for each sample in the evaluation set. This is an integer in the set
+        {0, 1}.
+    :param target_labels: The target labels for each sample in the evaluation set. This is an integer in the set
+        {0, 1}.
+    :param target: The target random variable for each sample in the evaluation set. This is a scalar in the range
+        [0, 1] and is the ground truth value for the sample.
     :param full_dataset: Whether to compute the metrics for the full dataset.
     :return: A dictionary of metrics. The keys are the metric names and the values are the metric values.
     """
@@ -293,6 +328,7 @@ def compute_metrics_from_pred(
         'Accuracy': accuracy,
     }
 
+    # TODO: Include the AUC metrics after debugging the logic below.
     # if not full_dataset:
     #     # BPSN (Background Positive, Subgroup Negative) AUC -
     #     # Restrict the test set to non-abusive examples that mention the identity and abusive examples that do not.

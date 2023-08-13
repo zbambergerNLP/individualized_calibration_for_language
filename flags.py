@@ -60,6 +60,9 @@ class TrainingArguments:
     )
     deepspeed: str = field(default="zero_stage2.json", metadata={"help": "The path to the deepspeed config file."})
     seed: int = field(default=42, metadata={"help": "The seed to use for training."})
+    do_average_calibration: bool = field(
+        default=False, metadata={"help": "Whether to perform average calibration at the end of training."}
+    )
 
     def __post_init__(self):
         if self.output_dir is not None:
@@ -92,8 +95,6 @@ class ModelArguments:
     input_r_dim: int = field(
         default=1, metadata={"help": "The dimension of the input r."}
     )
-
-
 
 
 @dataclass

@@ -1,3 +1,5 @@
+import typing
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,7 +41,20 @@ BASE_DIR = './'
 
 
 # Checks the distribution of the target variable in the given DataFrame.
-def target_dist_check(df, df_name, print_comments=False, num_ranges=2):
+def target_dist_check(
+        df: pd.DataFrame,
+        df_name: str,
+        print_comments: bool = False,
+        num_ranges: int = 2,
+):
+    """Checks the distribution of the target variable in the given DataFrame.
+
+    Args:
+        df: The DataFrame to check.
+        df_name: The name of the DataFrame.
+        print_comments: Whether to print comments from the DataFrame.
+        num_ranges: The number of ranges to use for the target variable.
+    """
     if num_ranges == 4:
         ranges = [(0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1)]
     elif num_ranges == 2:
@@ -53,8 +68,8 @@ def target_dist_check(df, df_name, print_comments=False, num_ranges=2):
         counts[f'[{lower}, {upper})'] = count
 
     text = df_name + " target counting: "
-    for range, count in counts.items():
-        text += f'{range}: {count} | '
+    for index, count in counts.items():
+        text += f'{index}: {count} | '
     print(text)
 
     if print_comments:
@@ -62,10 +77,26 @@ def target_dist_check(df, df_name, print_comments=False, num_ranges=2):
             sample_row_1 = df[(df['target'] >= lower) & (df['target'] < upper)].sample(n=1)
             sample_row_2 = df[(df['target'] >= lower) & (df['target'] < upper)].sample(n=1)
             print(
-                f'Range: [{lower}, {upper}) Comments: \n {sample_row_1["comment_text"].values[0]} \n\n {sample_row_2["comment_text"].values[0]}\n')
+                f'Range: [{lower}, {upper}) '
+                'Comments:'
+                f'\n{sample_row_1["comment_text"].values[0]}\n\n'
+                f'{sample_row_2["comment_text"].values[0]}\n'
+            )
 
 
-def drop_nontoxic_rows(df, percentages):
+def drop_nontoxic_rows(
+        df: pd.DataFrame,
+        percentages: typing.List[float],
+) -> pd.DataFrame:
+    """Drops rows from the given DataFrame that are not toxic.
+
+    Args:
+        df: The DataFrame to drop rows from.
+        percentages: The percentages of rows to drop from each range.
+
+    Returns:
+        The DataFrame with the rows dropped.
+    """
     # Define the ranges
     ranges = [(0, 0.01), (0.01, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1)]
 
@@ -90,7 +121,16 @@ def drop_nontoxic_rows(df, percentages):
 
 
 # Creates a histogram of the given group labels in the given DataFrame.
-def create_group_histogram(clean_data, group):
+def create_group_histogram(
+        clean_data: pd.DataFrame,
+        group: str,
+):
+    """Creates a histogram of the given group labels in the given DataFrame.
+
+    Args:
+        clean_data: The DataFrame to create the histogram from.
+        group: The group to create the histogram for.
+    """
     not_toxic = clean_data[clean_data['target'] <= 0.5][group]
     toxic = clean_data[clean_data['target'] > 0.5][group]
 
@@ -159,13 +199,19 @@ if __name__ == "__main__":
     target_dist_check(clean_data, "full data", num_ranges=2)
 
     # Split the dataset into 4 different datasets
-    train_data_with_nulls, temp_data_with_nulls = train_test_split(data_with_nulls, test_size=0.25, random_state=seed)
-    calib_data_with_nulls, temp_data_with_nulls = train_test_split(temp_data_with_nulls, test_size=0.67, random_state=seed)
-    eval_data_with_nulls, test_data_with_nulls = train_test_split(temp_data_with_nulls, test_size=0.5, random_state=seed)
+    train_data_with_nulls, temp_data_with_nulls = train_test_split(
+        data_with_nulls, test_size=0.25, random_state=seed)
+    calib_data_with_nulls, temp_data_with_nulls = train_test_split(
+        temp_data_with_nulls, test_size=0.67, random_state=seed)
+    eval_data_with_nulls, test_data_with_nulls = train_test_split(
+        temp_data_with_nulls, test_size=0.5, random_state=seed)
 
-    train_data_without_nulls, temp_data_without_nulls = train_test_split(data_without_nulls, test_size=0.5, random_state=seed)
-    calib_data_without_nulls, temp_data_without_nulls = train_test_split(temp_data_without_nulls, test_size=0.67, random_state=seed)
-    eval_data_without_nulls, test_data_without_nulls = train_test_split(temp_data_without_nulls, test_size=0.5, random_state=seed)
+    train_data_without_nulls, temp_data_without_nulls = train_test_split(
+        data_without_nulls, test_size=0.5, random_state=seed)
+    calib_data_without_nulls, temp_data_without_nulls = train_test_split(
+        temp_data_without_nulls, test_size=0.67, random_state=seed)
+    eval_data_without_nulls, test_data_without_nulls = train_test_split(
+        temp_data_without_nulls, test_size=0.5, random_state=seed)
 
     train_data = pd.concat([train_data_with_nulls, train_data_without_nulls])
     calib_data = pd.concat([calib_data_with_nulls, calib_data_without_nulls])

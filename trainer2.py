@@ -6,14 +6,12 @@ import datasets
 import tqdm
 import torch
 import numpy as np
-import typing
 import os
 import transformers
 from transformers.trainer_pt_utils import nested_concat, nested_numpify
 from transformers.trainer_utils import denumpify_detensorize
 
-import wandb
-from typing import List, Dict, Tuple, Optional, Union, Any
+from typing import List, Dict, Tuple, Union
 
 import data
 from model import CommentRegressorPrediction
@@ -46,6 +44,7 @@ class CommentRegressorTrainer:
             eval_steps: int = 200,
             save_steps: int = 1000,
             patience: int = 3,
+            r_input_upper_bound: float = 1.0,
     ):
         """Initialize the trainer.
 
@@ -74,6 +73,7 @@ class CommentRegressorTrainer:
             eval_steps: The number of steps to take before evaluating.
             save_steps: The number of steps to take before saving.
             patience: The number of steps to wait before early stopping.
+            r_input_upper_bound: The upper bound of the r input range. So it will be sampled from [0,bound].
         """
         self.output_dir = output_dir
         if accelerator is None:
@@ -84,6 +84,7 @@ class CommentRegressorTrainer:
             )
         self.accelerator = accelerator
         # Create metric manager to save and plot the metrics
+        # TODO: Add metric manager and make sure it works in a distributed training setting.
         # self.metric_manager = MetricManager(coefficient=coefficient, accelerator=accelerator)
         self.initial_learning_rate = optimizer.defaults.get('lr')
 
@@ -99,6 +100,7 @@ class CommentRegressorTrainer:
             validation_batch_size=validation_batch_size,
             calibration_batch_size=train_batch_size,
             test_batch_size=test_batch_size,
+            r_input_upper_bound=r_input_upper_bound,
         )
         (
             self.model,
@@ -138,6 +140,7 @@ class CommentRegressorTrainer:
         self.best_checkpoint_path = os.path.join(self.output_dir, 'best_model')
         os.makedirs(self.best_checkpoint_path, exist_ok=True)
         self.best_checkpoint_path = os.path.join(self.best_checkpoint_path, 'best_model.pt')
+        self.r_input_upper_bound = r_input_upper_bound
 
     def _set_up_dataloaders(
             self,
@@ -145,6 +148,7 @@ class CommentRegressorTrainer:
             validation_dataset: datasets.Dataset,
             train_batch_size: int,
             validation_batch_size: int,
+            r_input_upper_bound: float,
             calibration_dataset: datasets.Dataset = None,
             test_dataset: datasets.Dataset = None,
             calibration_batch_size: int = None,
@@ -164,7 +168,8 @@ class CommentRegressorTrainer:
         """
         collator_fn = data.CommentRegressorDataCollator(
             tokenizer=self.tokenizer,
-            seed=self.seed,
+            # Set the upper bound for input_r when generating model inputs.
+            r_input_upper_bound=r_input_upper_bound if r_input_upper_bound is not None else 1.0,
         )
         self.train_loader = torch.utils.data.DataLoader(
             train_dataset,
@@ -266,7 +271,8 @@ class CommentRegressorTrainer:
                             f"Train Loss: {total_loss.item():.3f} | "
                             f"Train CDF Loss: {cdf_loss.item():.3f} | "
                             f"Train NLL Loss: {nll_loss.item():.3f} | "
-                            f"Train Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}"
+                            # Use scientific notation for learning rate.
+                            f"Train Learning Rate: {self.optimizer.param_groups[0]['lr']:e}"
                         )
                         self.accelerator.log(
                             {
@@ -313,7 +319,6 @@ class CommentRegressorTrainer:
             self,
             validation_loader: torch.utils.data.DataLoader,
             validation_accumulation_steps: int,
-            with_wandb: bool = False,
     ) -> Dict[str, float]:
         """
         Evaluate the model on the validation set.
@@ -321,7 +326,6 @@ class CommentRegressorTrainer:
         Args:
             validation_loader: The validation dataloader.
             validation_accumulation_steps: The number of steps to accumulate gradients over.
-            with_wandb: Whether to log the results to wandb.
         """
         self.model.eval()
 
@@ -412,7 +416,7 @@ class CommentRegressorTrainer:
             if step % validation_accumulation_steps == 0 and self.accelerator.sync_gradients:
                 if total_losses_host is not None:
                     total_losses = nested_numpify(total_losses_host)
-                    all_losses = (
+                    all_total_losses = (
                         total_losses if all_total_losses is None
                         else np.concatenate((all_total_losses, total_losses), axis=0)
                     )
@@ -445,7 +449,10 @@ class CommentRegressorTrainer:
 
                 if input_rs_host is not None:
                     input_rs = nested_numpify(input_rs_host)
-                    all_input_rs = input_rs if all_input_rs is None else np.concatenate((all_input_rs, input_rs), axis=0)
+                    all_input_rs = input_rs if all_input_rs is None else np.concatenate(
+                        (all_input_rs, input_rs),
+                        axis=0,
+                    )
 
                 if groups_host is not None:
                     for group_name in groups_host:
@@ -477,11 +484,15 @@ class CommentRegressorTrainer:
 
         if cdf_losses_host is not None:
             cdf_losses = nested_numpify(cdf_losses_host)
-            all_cdf_losses = cdf_losses if all_cdf_losses is None else np.concatenate((all_cdf_losses, cdf_losses), axis=0)
+            all_cdf_losses = (
+                cdf_losses if all_cdf_losses is None else
+                np.concatenate((all_cdf_losses, cdf_losses), axis=0))
 
         if nll_losses_host is not None:
             nll_losses = nested_numpify(nll_losses_host)
-            all_nll_losses = nll_losses if all_nll_losses is None else np.concatenate((all_nll_losses, nll_losses), axis=0)
+            all_nll_losses = (
+                nll_losses if all_nll_losses is None else
+                np.concatenate((all_nll_losses, nll_losses), axis=0))
 
         if means_host is not None:
             means = nested_numpify(means_host)
@@ -579,6 +590,14 @@ class CommentRegressorTrainer:
             self,
             val_loss: float,
     ) -> bool:
+        """Perform early stopping.
+
+        Args:
+            val_loss: The validation loss.
+
+        Returns:
+            True if early stopping should be performed, False otherwise.
+        """
         if val_loss < self.best_model_loss:
             self.best_model_loss = val_loss
             self.patience_counter = 0
@@ -586,10 +605,10 @@ class CommentRegressorTrainer:
             return False
         else:
             self.patience_counter += 1
-            print("\n----------- patience_counter += 1 -----------")
+            self.accelerator.print("\n----------- patience_counter += 1 -----------")
             if self.patience_counter >= self.patience:
                 self.accelerator.print(f"Early stopping with best validation loss: {self.best_model_loss}")
                 self.model = self.best_model_checkpoint
-                print("\n----------Perform early stopping----------")
+                self.accelerator.print("\n----------Perform early stopping----------")
                 return True
             return False

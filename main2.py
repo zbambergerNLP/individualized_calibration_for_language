@@ -2,32 +2,24 @@ import logging
 
 import accelerate
 import numpy as np
-from accelerate import Accelerator
-
 import data_preprocessing
 import trainer2
-import wandb
-import plots
-
 import flags
 import os
 import typing
-
-import metrics
 import model as comment_regressor
 import datasets
 import torch
 import transformers
-from transformers import get_linear_schedule_with_warmup
-
 import data
-#from trainer2 import CommentRegressorTrainer
-from transformers import TrainingArguments, AutoTokenizer
 from plots import end_of_training_plots
 from average_calibration import perform_average_calibration
 
 
 def main():
+
+    logger = logging.getLogger(__name__)
+
     # Parse arguments
     parser = transformers.HfArgumentParser(
         (flags.ModelArguments, flags.DataArguments, flags.TrainingArguments)
@@ -37,7 +29,7 @@ def main():
         gradient_accumulation_steps=training_args.training_accumulation_steps,
         log_with='wandb',
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_args.model_name_or_path)
 
     # Establish determinism for reproducibility. Use provided seed
     # if one was provided. Otherwise, generate a random seed.
@@ -84,6 +76,7 @@ def main():
     )
 
     if datasets_exist:
+        logger.log(logging.INFO, 'Loading tokenized datasets from disk.')
         train_dataset = datasets.load_from_disk(os.path.join('data', tokenized_train_dataset_name))
         validation_dataset = datasets.load_from_disk(os.path.join('data', tokenized_validation_dataset_name))
         calibration_dataset = datasets.load_from_disk(os.path.join('data', tokenized_calibration_dataset_name))
@@ -91,6 +84,7 @@ def main():
 
     # Load datasets
     else:
+        logger.log(logging.INFO, 'Tokenizing datasets...')
         train_dataset, validation_dataset, calibration_dataset, test_dataset = data.create_datasets(
             train_file=data_args.train_file,
             validation_file=data_args.validation_file,
@@ -99,6 +93,7 @@ def main():
             tokenizer_function=tokenizer_function,
             batch_size=model_args.tokenizer_batch_size,
         )
+        logger.log(logging.INFO, 'Saving tokenized datasets to disk')
         train_dataset.save_to_disk(
             os.path.join('data', tokenized_train_dataset_name),
         )
@@ -115,12 +110,24 @@ def main():
     # Sample examples according to user specifications from flags and create a new dataset
     # with the sampled examples.
     if data_args.sample_train_examples:
+        logger.log(logging.INFO, f'Sampling {data_args.sample_train_examples} examples from the training set.')
         train_dataset['train'] = train_dataset['train'].select(range(data_args.sample_train_examples))
     if data_args.sample_validation_examples:
+        logger.log(logging.INFO, f'Sampling {data_args.sample_validation_examples} examples from the validation set.')
         validation_dataset['train'] = validation_dataset['train'].select(range(data_args.sample_validation_examples))
     if data_args.sample_test_examples:
+        logger.log(logging.INFO, f'Sampling {data_args.sample_test_examples} examples from the test set.')
         test_dataset['train'] = test_dataset['train'].select(range(data_args.sample_test_examples))
 
+    # Create the model
+    logger.log(
+        logging.INFO,
+        f'Creating model with the following parameters:'
+        f'\n\tMLP hidden layers: {model_args.mlp_hidden}'
+        f'\n\tMLP dropout: {model_args.mlp_dropout}'
+        f'\n\tText encoder model name: {model_args.model_name_or_path}'
+        f'\n\tInput r dim: {model_args.input_r_dim}'
+    )
     experiment_model = comment_regressor.CommentRegressor(
         mlp_hidden=model_args.mlp_hidden,
         drop_prob=model_args.mlp_dropout,
@@ -135,7 +142,7 @@ def main():
     total_steps = int(
             (len(train_dataset['train']) / training_args.per_device_train_batch_size) * training_args.num_train_epochs
     )
-    scheduler = get_linear_schedule_with_warmup(
+    scheduler = transformers.get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=int(training_args.warmup_ratio * total_steps),
         num_training_steps=total_steps)
@@ -144,6 +151,8 @@ def main():
         f'seed_{training_args.seed}_'
         f'coefficient_{str(training_args.coefficient).replace(".", "_")}_'
         f'lr_{str(training_args.learning_rate).replace(".", "_")}_'
+        f'r_dim_{model_args.input_r_dim}_'
+        f'r_upper_bound_{data_args.r_input_upper_bound}_'
     )
     output_dir = os.path.join(training_args.output_dir, experiment_name)
 
@@ -170,6 +179,8 @@ def main():
         patience=training_args.patience,
         accelerator=accelerator,
     )
+
+    logger.log(logging.INFO, f'Starting training for experiment {experiment_name}')
     trainer.train(
         epochs=training_args.num_train_epochs,
     )
@@ -193,26 +204,26 @@ def main():
         )
 
         # Perform average calibration
-        calibrated_comment_regressor = perform_average_calibration(
-            comment_regressor=trainer.model,
-            calibration_dataloader=trainer.calibration_loader
-        )
+        if training_args.do_average_calibration:
+            # TODO: Ensure average calibration works in distributed training.
+            calibrated_comment_regressor = perform_average_calibration(
+                comment_regressor=trainer.model,
+                calibration_dataloader=trainer.calibration_loader
+            )
 
-        # Evaluate the calibrated model on the test set
-        trainer.model = calibrated_comment_regressor.to(trainer.accelerator.device)
-        test_metrics_calib = trainer.eval(validation_loader=trainer.validation_loader,
-                                          validation_accumulation_steps=trainer.validation_accumulation_steps,
-                                          with_wandb=False)
+            # Evaluate the calibrated model on the test set
+            trainer.model = calibrated_comment_regressor.to(trainer.accelerator.device)
+            test_metrics_calib = trainer.eval(validation_loader=trainer.validation_loader,
+                                              validation_accumulation_steps=trainer.validation_accumulation_steps)
 
-        end_of_training_plots(eval_result=test_metrics_calib,
-                              alpha=training_args.coefficient,
-                              data_title="r in [0, {}], r dim = {}, calibrated".
-                              format(data_args.r_input_upper_bound, model_args.input_r_dim),
-                              wandb_run=None)
+            end_of_training_plots(eval_result=test_metrics_calib,
+                                  alpha=training_args.coefficient,
+                                  data_title="r in [0, {}], r dim = {}, calibrated".
+                                  format(data_args.r_input_upper_bound, model_args.input_r_dim),
+                                  wandb_run=None)
 
+    accelerator.print("\n\nDone")
 
-    print("\n\nDone")
 
 if __name__ == '__main__':
     main()
-

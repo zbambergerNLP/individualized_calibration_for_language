@@ -9,7 +9,7 @@ import wandb
 def end_of_training_plots(
         eval_result: dict,
         alpha: float,
-        wandb_run,
+        wandb_run: wandb.sdk.wandb_run.Run,
         data_title: str = "",
 ):
     """
@@ -46,7 +46,11 @@ def end_of_training_plots(
 
     :param alpha: The coefficient of the loss function (balances between the performance-oriented loss and the
         fairness-oriented loss).
+    :param wandb_run: The wandb run object.
+    :param data_title: The title of the dataset.
     """
+    # TODO: Uncomment code relating to BPSN_AUC and BNSP_AUC when they are implemented
+    # TODO: Ensure that this method can operate in a distributed training setting.
     # Converts any PyTorch tensor values to regular integers
     for key, value in eval_result.items():
         if torch.is_tensor(value):
@@ -56,17 +60,20 @@ def end_of_training_plots(
     # 'key != metric' so we won't take the metric on the all dataset
     # Metrics that smaller is better
     for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'FPR']:
-        cuur_list = [value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
+        cuur_list = (
+            [value for key, value in eval_result.items()
+             if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
+        )
         if len(cuur_list) == 0:
             continue
         eval_result[metric + '_worst_group'] = max(cuur_list)
-        eval_result[metric + '_best_group'] =  min(cuur_list)
+        eval_result[metric + '_best_group'] = min(cuur_list)
 
     # Metrics that bigger is better
     for metric in ['Accuracy', 'F1', 'TPR', 'Precision', 'Recall']:
-        curr_list = [value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
+        curr_list = (
+            [value for key, value in eval_result.items() if
+             key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric])
         if len(curr_list) == 0:
             continue
         eval_result[metric + '_worst_group'] = min(curr_list)
@@ -74,8 +81,9 @@ def end_of_training_plots(
 
     # Finds the mean metric value between all the groups
     for metric in ['loss_nll', 'loss_stddev', 'loss_cdf', 'Accuracy', 'F1', 'TPR', 'FPR', 'Precision', 'Recall']:
-        curr_list = [value for key, value in eval_result.items()
-                if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric]
+        curr_list = (
+            [value for key, value in eval_result.items()
+             if key.endswith(metric) and key != metric and key != 'biggest_diffs_' + metric])
         if len(curr_list) == 0:
             continue
         eval_result[metric + '_mean'] = sum(curr_list) / len(curr_list)
@@ -151,8 +159,8 @@ def update_plot(
     plot_data_path = '{}/data_{}.csv'.format(dir_path, data_title)
     plot_path = '{}/graph_{}.png'.format(dir_path, data_title)
     if os.path.exists(plot_data_path):
-        with open(plot_data_path, 'rb') as f:
-            plot_data = pd.read_csv(plot_data_path)
+        with open(plot_data_path, 'rb') as fileHandle:
+            plot_data = pd.read_csv(fileHandle)
     else:
         plot_data = pd.DataFrame(columns=[key_x, key_y, 'alpha', 'timestamp'])
 

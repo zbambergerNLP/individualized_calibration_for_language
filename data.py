@@ -14,7 +14,6 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
             self,
             tokenizer,
             r_input_upper_bound: float = 1.0,
-            seed: int = 42,
             max_length=None,
     ):
         """Initialize the data collator.
@@ -22,6 +21,7 @@ class CommentRegressorDataCollator(transformers.DefaultDataCollator):
         Args:
             tokenizer: The tokenizer to use.
             r_input_upper_bound: The upper bound for the random r input.
+            seed: The random seed.
             max_length: The maximum length of the input text.
         """
         self.tokenizer = tokenizer
