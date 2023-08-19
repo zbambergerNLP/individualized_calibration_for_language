@@ -6,7 +6,7 @@
   </p>
 
 
-<h2 id="summary"> :book: Summary </h2>
+## Summary
 
 Bias detection and mitigation in Natural Language Processing (NLP) pose significant challenges, particularly in addressing individual instances and nuanced forms of bias that transcend predefined protected attributes. Building upon the work of Zhao et al., (2020) [[1]](#ref1), we introduce Individualized Random Calibration for Language Forecasters (IRCLF), a new method that integrates individually calibrated random forecasters with empirical transformer encoder models [[2]](#ref2). Unlike conventional methods, IRCLF seamlessly balances accuracy and \textit{individualized} fairness during the training phase, without dependence on predefined demographic information.
 
@@ -45,7 +45,7 @@ Note the flags that can be set in the script, which are described in `flags.py`.
 <br />
 
 
-<h2 id="references-and-credits"> :raised_hands: References and credits</h2>
+## References and credits
 
 * <a id="ref1">[[1]](https://arxiv.org/abs/2006.10288)</a> "Individual calibration with randomized forecasting", Zhao, Shengjia and Ma, Tengyu and Ermon, Stefano. International Conference on Machine Learning.
 * <a id="ref2">[[2]](https://arxiv.org/abs/1810.04805)</a> "Bert: Pre-training of deep bidirectional transformers for language understanding", Devlin, Jacob and Chang, Ming-Wei and Lee, Kenton and Toutanova, Kristina, 2018.
