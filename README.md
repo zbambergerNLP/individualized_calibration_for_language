@@ -27,6 +27,8 @@ For more details, see our project summary [[5]](#ref5).
 - accelerate
 - datasets
 
+<br />
+
 ## Usage
 ### 1. Download the data from Kaggle [[4]](#ref4)
 ### 2. Set up the accelerated training configuration
