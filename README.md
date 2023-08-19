@@ -12,6 +12,9 @@ Bias detection and mitigation in Natural Language Processing (NLP) pose signific
 
 We leverage IRCLF for the toxicity prediction task [[3]](#ref3) [[4]](#ref4), measuring the model's learned bias towards nine protected groups. Our findings reveal a successful replication of the trends in [[1]](#ref1), where a single hyper-parameter, $\alpha$, adeptly negotiates between an accuracy-oriented loss (NLL) and a fairness-oriented loss (PAIC). Yet, a critical examination employing more expressive and practical classification metrics uncovered shortcomings in achieving fairness by contemporary standards. This work not only advances the understanding of individualized fairness in NLP but also identifies vital areas for future research and improvement
 
+<p align="center">
+<img src="https://github.com/zbambergerNLP/individualized_calibration_for_language/blob/main/scatter_loss.png" align="center" alt="Parameters maps">
+</p>
 
 <br />
 
