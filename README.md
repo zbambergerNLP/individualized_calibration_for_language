@@ -10,11 +10,9 @@
 
 Bias detection and mitigation in Natural Language Processing (NLP) pose significant challenges, particularly in addressing individual instances and nuanced forms of bias that transcend predefined protected attributes. Building upon the work of Zhao et al., (2020) [[1]](#ref1), we introduce Individualized Random Calibration for Language Forecasters (IRCLF), a new method that integrates individually calibrated random forecasters with empirical transformer encoder models [[2]](#ref2). Unlike conventional methods, IRCLF seamlessly balances accuracy and \textit{individualized} fairness during the training phase, without dependence on predefined demographic information.
 
-We leverage IRCLF for the toxicity prediction task [[3]](#ref3) [[4]](#ref4), measuring the model's learned bias towards nine protected groups. Our findings reveal a successful replication of the trends in [[1]](#ref1), where a single hyper-parameter, $\alpha$, adeptly negotiates between an accuracy-oriented loss (NLL) and a fairness-oriented loss (PAIC). Yet, a critical examination employing more expressive and practical classification metrics uncovered shortcomings in achieving fairness by contemporary standards. This work not only advances the understanding of individualized fairness in NLP but also identifies vital areas for future research and improvement
+We leverage IRCLF for the toxicity prediction task [[3]](#ref3) [[4]](#ref4), measuring the model's learned bias towards nine protected groups. Our findings reveal a successful replication of the trends in [[1]](#ref1), where a single hyper-parameter, $\alpha$, adeptly negotiates between an accuracy-oriented loss (NLL) and a fairness-oriented loss (PAIC). Yet, a critical examination employing more expressive and practical classification metrics uncovered shortcomings in achieving fairness by contemporary standards. This work not only advances the understanding of individualized fairness in NLP but also identifies vital areas for future research and improvement.
 
-<p align="center">
-<img src="https://github.com/zbambergerNLP/individualized_calibration_for_language/blob/main/scatter_loss.png" align="center" alt="Parameters maps">
-</p>
+For more details, see our project summary [[5]](#ref5).
 
 <br />
 
@@ -53,3 +51,6 @@ Note the flags that can be set in the script, which are described in `flags.py`.
 * <a id="ref2">[[2]](https://arxiv.org/abs/1810.04805)</a> "Bert: Pre-training of deep bidirectional transformers for language understanding", Devlin, Jacob and Chang, Ming-Wei and Lee, Kenton and Toutanova, Kristina, 2018.
 * <a id="ref3">[[3]](https://arxiv.org/abs/1903.04561)</a> "Nuanced Metrics for Measuring Unintended Bias with Real Data for Text Classification", Borkan, Daniel and Dixon, Lucas and Sorensen, Jeffrey and Thain, Nithum and Vasserman, Lucy. Association for Computing Machinery, 2019.
 * <a id="ref4">[[4]](https://www.kaggle.com/c/jigsaw-unintended-bias-in-toxicity-classification/data?select=train.csv)</a> Jigsaw Unintended Bias in Toxicity Classification, Kaggle.
+* <a id="ref5">[[5]](https://github.com/zbambergerNLP/individualized_calibration_for_language/blob/main/Reliability_in_ML_Project__Extended_version.pdf)</a> Our prject summary, Zachary Bamberger, Edan Kinderman.
+
+
