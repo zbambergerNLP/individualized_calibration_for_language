@@ -15,7 +15,7 @@ from typing import List, Dict, Tuple, Union
 
 import data
 from model import CommentRegressorPrediction
-from metrics import MetricManager, compute_metrics
+from metrics import compute_metrics
 
 
 class CommentRegressorTrainer:
@@ -83,9 +83,6 @@ class CommentRegressorTrainer:
 
             )
         self.accelerator = accelerator
-        # Create metric manager to save and plot the metrics
-        # TODO: Add metric manager and make sure it works in a distributed training setting.
-        # self.metric_manager = MetricManager(coefficient=coefficient, accelerator=accelerator)
         self.initial_learning_rate = optimizer.defaults.get('lr')
 
         self.tokenizer = tokenizer
@@ -284,23 +281,12 @@ class CommentRegressorTrainer:
                             },
                             step=step,
                         )
-                        # self.metric_manager.add_metric(step=self.training_step, metric_name="training_loss",
-                        #                                metric_value=total_loss.item())
-                        # self.metric_manager.add_metric(step=self.training_step, metric_name="training_cdf_loss",
-                        #                                metric_value=cdf_loss.item())
-                        # self.metric_manager.add_metric(step=self.training_step, metric_name="training_nll_loss",
-                        #                                metric_value=nll_loss.item())
-                        # self.metric_manager.add_metric(step=self.training_step, metric_name="lr",
-                        #                                metric_value=learning_rate)
 
                     if step % self.eval_steps == 0:
                         val_metrics = self.eval(self.validation_loader, self.validation_accumulation_steps)
                         self.accelerator.log(val_metrics, step=step)
-                        # self.metric_manager.add_dict_metrics(step=self.training_step, metrics_dict=val_metrics)
-                        # self.metric_manager.create_all_metrics_plots()
                         stop_early = self._perform_early_stopping(val_metrics["eval_loss"])
                         if stop_early:
-                            # self.metric_manager.save_metrics()
                             self.accelerator.end_training()
                             return
 
@@ -312,7 +298,6 @@ class CommentRegressorTrainer:
                         self.accelerator.print(f"Saving model to `{checkpoint_dir}`")
                         self.accelerator.save_state(checkpoint_dir)
 
-        # self.metric_manager.save_metrics()
         self.accelerator.end_training()
 
     def eval(
